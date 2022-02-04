@@ -73,9 +73,68 @@
   (match p
     [(Program info e) (Program info ((uniquify-exp '()) e))]))
 
+;; Checks if an expression is atomic (i.e a variable or an integer)
+(define (atom? exp)
+  (match exp
+    [(Var x) #t]
+    [(Int n) #t]
+    [_ #f]))
+
+;; Converts the complex expressions to atomic expressions (Refer the grammar on page 27 for atomic expressions)
+;; by introducing new variables using the Let feature of Racket.
+(define (rco_atom exp)
+  (match exp
+    [(Prim '+ (list e1 e2))
+     (cond
+       [(and (atom? e1) (atom? e2))
+        (define new-name (gensym "tmp"))
+        (Let new-name (Prim '+ (list e1 e2)) (Var new-name))]
+       [(and (not (atom? e1)) (not (atom? e2)))
+        (define new-name-1 (gensym "tmp"))
+        (define new-name-2 (gensym "tmp"))
+        (Let new-name-1 (rco_exp e1) (Let new-name-2 (rco_exp e2) (Prim '+ (list (Var new-name-1) (Var new-name-2)))))]
+       [(atom? e1)
+        (define new-name (gensym "tmp"))
+        (Let new-name (rco_exp e2) (Prim '+ (list e1 (Var new-name))))]
+       [(atom? e2)
+        (define new-name (gensym "tmp"))
+        (Let new-name (rco_exp e1) (Prim '+ (list (Var new-name) e2)))]
+       )]
+    [(Prim '- (list e1))
+     (define new-name (gensym "tmp"))
+     (Let new-name (rco_exp e1) (Prim '- (list (Var new-name))))]))
+    
+;; Converts complex expression using the above function rco_atom only if there is a need to
+;; introduce a new variable, for other cases rco_exp function handles the expression
+(define (rco_exp exp)
+  (match exp
+    [(Var x) (Var x)]
+    [(Int n) (Int n)]
+    [(Prim 'read '()) (Prim 'read '())]
+    [(Prim '+ (list e1 e2))
+     (if (and (atom? e1) (atom? e2))
+         (Prim '+ (list e1 e2))
+         (rco_atom exp))]
+    [(Prim '- (list e1))
+     (if (atom? e1)
+         (Prim '- (list e1))
+         (rco_atom exp))]
+    [(Let x e body)
+     (Let x (rco_exp e) (rco_exp body))]))
+         
+(define (test_rco p)
+  (assert "testing rco"
+          (equal? (interp-Lvar p) (interp-Lvar (remove-complex-opera* p)))))
+
+(define (random-test)
+  (test_rco (parse-program `(program () (- (+ 10 20)))))
+  (test_rco (parse-program `(program () (let ([x (+ 10 (+ 5 6))]) (+ (+ x 1) 10)))))
+  )
 ;; remove-complex-opera* : R1 -> R1
+    
 (define (remove-complex-opera* p)
-  (error "TODO: code goes here (remove-complex-opera*)"))
+  (match p
+    [(Program info e) (Program info (rco_exp e))]))
 
 ;; explicate-control : R1 -> C0
 (define (explicate-control p)
