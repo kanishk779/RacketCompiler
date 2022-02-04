@@ -26,6 +26,18 @@
 
 (interp-tests "var" #f compiler-passes interp-Lvar "var_test" (tests-for "var"))
 
+;; Test for UNIQUIFY
+(define (test_uniquify p)
+  (assert "testing uniquify"
+          (equal? (interp-Lvar p) (interp-Lvar (uniquify p)))))
+
+(define (random-test)
+  (test_uniquify (parse-program `(program () (let ([x 32]) (+ (let ([x 10]) x) x)))))
+  (test_uniquify (parse-program `(program () (let ([x (let ([x 4]) (+ x 1))]) (+ x 2)))))
+  (test_uniquify (parse-program `(program () (let ([x (let ([x (let ([x (let ([x 5]) (+ x 10))]) (- x))]) (+ x 10))]) (+ x 2)))))
+  )
+
+
 ;; Uncomment the following when all the passes are complete to
 ;; test the final x86 code.
 ;; (compiler-tests "var" #f compiler-passes "var_test" (tests-for "var"))

@@ -1,5 +1,6 @@
 #lang racket
 (require racket/set racket/stream)
+(require racket/dict)
 (require racket/fixnum)
 (require "interp-Lint.rkt")
 (require "interp-Lvar.rkt")
@@ -51,14 +52,19 @@
 ;; HW1 Passes
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+
+;; The dictionary (i.e env) stores the mapping between the original variable names and the new corresponding variable name that we create using gensym function.
+;; example (let [x 10] (+ x 10))  ----UNIQUIFY---> (let [x.1 10] (+ x.1 10)) where 'x' has been mapped to 'x.1' using the gensym function
 (define (uniquify-exp env)
   (lambda (e)
     (match e
       [(Var x)
-       (error "TODO: code goes here (uniquify-exp, symbol?)")]
+       (Var (dict-ref env x))]
       [(Int n) (Int n)]
       [(Let x e body)
-       (error "TODO: code goes here (uniquify-exp, let)")]
+       (define new-name (gensym x))
+       (define new-env (dict-set env x new-name))
+       (Let new-name ((uniquify-exp new-env) e) ((uniquify-exp new-env) body))]
       [(Prim op es)
        (Prim op (for/list ([e es]) ((uniquify-exp env) e)))])))
 
