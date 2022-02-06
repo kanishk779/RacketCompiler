@@ -5,6 +5,7 @@
 (require "interp-Lvar.rkt")
 (provide interp-Cvar interp-Cvar-mixin)
 
+;; This is a method definition. Name of the method is interp-Cvar-mixin, which takes super-class as an argument 
 (define (interp-Cvar-mixin super-class)
   (class super-class
     (super-new)
@@ -35,4 +36,4 @@
     ))
     
 (define (interp-Cvar p)
-  (send (new (interp-Cvar-mixin interp-Lvar-class)) interp-program p))
+  (send (new (interp-Cvar-mixin interp-Lvar-class)) interp-program p)) ;; Calling the interp-program function of the class returned by the function interp-Cvar-mixin
