@@ -127,8 +127,9 @@
           (equal? (interp-Lvar p) (interp-Lvar (remove-complex-opera* p)))))
 
 (define (random-test)
-  (test_rco (parse-program `(program () (- (+ 10 20)))))
+  (test_rco (parse-program `(program () (let ([y (let ([x 20]) (+ x (let ([x 22]) x)))]) y))))
   (test_rco (parse-program `(program () (let ([x (+ 10 (+ 5 6))]) (+ (+ x 1) 10)))))
+  (test_rco (parse-program `(program () (let ([x 20]) (+ x (let ([x 22]) (+ x 10)))))))
   )
 ;; remove-complex-opera* : R1 -> R1
     
@@ -136,9 +137,39 @@
   (match p
     [(Program info e) (Program info (rco_exp e))]))
 
+;; The input to this pass will be the L_var with all the complex operation removed
+;; which means operands of each operation will be atoms, (i.e Var or Int)
+(define (explicate-tail exp)
+  (match exp
+    [(Var x) (values (Return (Var x)) (list))]
+    [(Int n) (values (Return (Int n)) (list))]
+    [(Prim op es) (values (Return (Prim op es)) (list))]
+    [(Let x rhs body)
+     (define-values (tail-exp var-list) (explicate-tail body))
+     (explicate-assign rhs x tail-exp var-list)]
+    [_ (error "explicate-tail unhandled case" exp)]))
+
+;; This function is for the creating assignment statement in C_var language (Refer the grammar)
+(define (explicate-assign exp x cont var-list)
+  (match exp
+    [(Var var)
+     (values (Seq (Assign (Var x) (Var var)) cont) (cons x var-list))]
+    [(Int n)
+     (values (Seq (Assign (Var x) (Int n)) cont) (cons x var-list))]
+    [(Prim op es)
+     (values (Seq (Assign (Var x) (Prim op es)) cont) (cons x var-list))]
+    [(Let y rhs body)
+     (define-values (tail-exp new-var-list) (explicate-assign body x cont var-list))
+     (explicate-assign rhs y tail-exp new-var-list)]
+    [_ (error "explicate-assign unhandled case" exp)]))
+
+
 ;; explicate-control : R1 -> C0
 (define (explicate-control p)
-  (error "TODO: code goes here (explicate-control)"))
+  (match p
+    [(Program info e)
+     (define-values (tail-exp var-list) (explicate-tail e))
+     (Program var-list tail-exp)]))
 
 ;; select-instructions : C0 -> pseudo-x86
 (define (select-instructions p)
