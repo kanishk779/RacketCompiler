@@ -175,9 +175,43 @@
      (define info-dict (dict-set '() 'locals var-list))
      (CProgram info-dict exp-dict)]))
 
+;; select for expression
+(define (select-exp exp var)
+  (match exp
+    [(Int int) (list (Instr 'movq '((Imm int) var)))]
+    [(Var x) (list (Instr 'movq '((Var x) var)))]
+    [(Prim 'read '()) (list (Callq 'read_int) (Instr 'movq '((Reg 'rax) var)))]
+    [(Prim '- '(a)) (list (Instr 'movq '(a var)) (Instr 'negq '(var)))]
+    [(Prim '+ '(a1 a2)) (list (Instr 'movq '(a1 var)) (Instr 'addq '(a2 var)))]))
+
+;; select for statement
+(define (select-statement exp)
+  (match exp
+    [(Assign (Var var) (Prim '+ '((Var y) a2)))
+     (cond
+       [(equal? var y) (Instr 'addq '(a2 (Var var)))]
+       [else (select-exp (Prim '+ '((Var y) a2)) (Var var))])]
+    [(Assign (Var var) (Prim '+ '(a1 (Var y))))
+     (cond
+       [(equal? var y) (Instr 'addq '(a1 (Var var)))]
+       [else (select-exp (Prim '+ '(a1 (Var y))) (Var var))])]
+    [(Assign (Var var) es) (select-exp es (Var var))]))
+
+;; select for tail
+(define (select-tail exp)
+  (match exp
+    [(Seq stmt tail) (append (select-statement stmt) (select-tail tail))]
+    [(Return (Prim 'read '())) (list (Callq 'read_int) (Retq))]
+    [(Return es) (append (select-exp es (Reg 'rax)) (Retq))]))
+
 ;; select-instructions : C0 -> pseudo-x86
 (define (select-instructions p)
-  (error "TODO: code goes here (select-instructions)"))
+  (match p
+      [(CProgram info e)
+       (define instr (select-tail (cdr (car e))))
+       (define block (Block info instr))
+       (define exp (dict-set '() 'start block))
+       (X86Program info exp)]))
 
 ;; assign-homes : pseudo-x86 -> pseudo-x86
 (define (assign-homes p)
