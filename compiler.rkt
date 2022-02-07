@@ -6,6 +6,7 @@
 (require "interp-Lvar.rkt")
 (require "interp-Cvar.rkt")
 (require "utilities.rkt")
+(require "interp.rkt")
 (provide (all-defined-out))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -175,34 +176,74 @@
      (define info-dict (dict-set '() 'locals var-list))
      (CProgram info-dict exp-dict)]))
 
-;; select for expression
+;; Convert (Int n) --> (Imm n) so as to follow the X86 grammar
+(define (int->imm exp)
+  (match exp
+    [(Int n) (Imm n)]
+    [_ exp]))
+
+;; select for expression (which are assignment statements, as it is the output of explicate control)
 (define (select-exp exp var)
   (match exp
-    [(Int int) (list (Instr 'movq '((Imm int) var)))]
-    [(Var x) (list (Instr 'movq '((Var x) var)))]
-    [(Prim 'read '()) (list (Callq 'read_int) (Instr 'movq '((Reg 'rax) var)))]
-    [(Prim '- '(a)) (list (Instr 'movq '(a var)) (Instr 'negq '(var)))]
-    [(Prim '+ '(a1 a2)) (list (Instr 'movq '(a1 var)) (Instr 'addq '(a2 var)))]))
+    [(Int int)
+     (list
+      (Instr 'movq (list (Imm int) var)))]
+    [(Var x)
+     (list
+      (Instr 'movq (list (Var x) var)))]
+    [(Prim 'read '())
+     (list
+      (Callq 'read_int)
+      (Instr 'movq (list (Reg 'rax) var)))]
+    [(Prim '- (list a))
+     (list
+      (Instr 'movq (list (int->imm a) var))
+      (Instr 'negq (list var)))]
+    [(Prim '+ (list a1 a2))
+     (list
+      (Instr 'movq (list (int->imm a1) var))
+      (Instr 'addq (list (int->imm a2) var)))]))
 
-;; select for statement
+;; select for statement, this function handles the special case when one of
+;; the rhs of assignment is same as lhs variable.
 (define (select-statement exp)
   (match exp
-    [(Assign (Var var) (Prim '+ '((Var y) a2)))
+    [(Assign (Var var) (Prim '+ (list (Var y) a2)))
      (cond
-       [(equal? var y) (Instr 'addq '(a2 (Var var)))]
-       [else (select-exp (Prim '+ '((Var y) a2)) (Var var))])]
-    [(Assign (Var var) (Prim '+ '(a1 (Var y))))
+       [(equal? var y)
+        (Instr 'addq (list (int->imm a2) (Var var)))]
+       [else
+        (select-exp (Prim '+ (list (Var y) a2)) (Var var))])]
+    [(Assign (Var var) (Prim '+ (list a1 (Var y))))
      (cond
-       [(equal? var y) (Instr 'addq '(a1 (Var var)))]
-       [else (select-exp (Prim '+ '(a1 (Var y))) (Var var))])]
+       [(equal? var y)
+        (Instr 'addq (list (int->imm a1) (Var var)))]
+       [else
+        (select-exp (Prim '+ (list a1 (Var y))) (Var var))])]
     [(Assign (Var var) es) (select-exp es (Var var))]))
 
-;; select for tail
+;; select for tail (Refer the grammar of C_var for tail)
 (define (select-tail exp)
   (match exp
-    [(Seq stmt tail) (append (select-statement stmt) (select-tail tail))]
-    [(Return (Prim 'read '())) (list (Callq 'read_int) (Retq))]
-    [(Return es) (append (select-exp es (Reg 'rax)) (Retq))]))
+    [(Seq stmt tail)
+     (append
+      (select-statement stmt)
+      (select-tail tail))]
+    [(Return (Prim 'read '()))
+     (list
+      (Callq 'read_int)
+      (Jmp 'conclusion))]
+    [(Return es)
+     (append
+      (select-exp es (Reg 'rax))
+      (list (Jmp 'conclusion)))]))
+
+;; Give stack-size (It must be a multiple of 16)
+(define (give-st-size var-list)
+  (define len (length var-list))
+  (if (odd? len)
+      (* (+ len 1) 8)
+      (* len 8)))
 
 ;; select-instructions : C0 -> pseudo-x86
 (define (select-instructions p)
@@ -211,7 +252,8 @@
        (define instr (select-tail (cdr (car e))))
        (define block (Block info instr))
        (define exp (dict-set '() 'start block))
-       (X86Program info exp)]))
+       (define new-info (dict-set '() 'stack-size (give-st-size (cdr (car info)))))
+       (X86Program new-info exp)]))
 
 ;; assign-homes : pseudo-x86 -> pseudo-x86
 (define (assign-homes p)
@@ -233,7 +275,7 @@
      ;; Uncomment the following passes as you finish them.
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar)
      ("explicate control" ,explicate-control ,interp-Cvar)
-     ;; ("instruction selection" ,select-instructions ,interp-x86-0)
+     ("instruction selection" ,select-instructions ,interp-x86-0)
      ;; ("assign homes" ,assign-homes ,interp-x86-0)
      ;; ("patch instructions" ,patch-instructions ,interp-x86-0)
      ;; ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
