@@ -24,7 +24,7 @@
           (string=? r (car (string-split p "_"))))
         all-tests)))
 
-(interp-tests "var" #f compiler-passes interp-Lvar "var_test" (tests-for "var"))
+(interp-tests "var" #f compiler-passes interp-Lvar "aman_test" (tests-for "aman"))
 
 
 

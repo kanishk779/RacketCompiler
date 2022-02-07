@@ -63,9 +63,10 @@
        (Var (dict-ref env x))]
       [(Int n) (Int n)]
       [(Let x e body)
+       (define rhs ((uniquify-exp env) e))
        (define new-name (gensym x))
        (define new-env (dict-set env x new-name))
-       (Let new-name ((uniquify-exp new-env) e) ((uniquify-exp new-env) body))]
+       (Let new-name rhs ((uniquify-exp new-env) body))]
       [(Prim op es)
        (Prim op (for/list ([e es]) ((uniquify-exp env) e)))])))
 
@@ -87,9 +88,6 @@
   (match exp
     [(Prim '+ (list e1 e2))
      (cond
-       [(and (atom? e1) (atom? e2))
-        (define new-name (gensym "tmp"))
-        (Let new-name (Prim '+ (list e1 e2)) (Var new-name))]
        [(and (not (atom? e1)) (not (atom? e2)))
         (define new-name-1 (gensym "tmp"))
         (define new-name-2 (gensym "tmp"))
@@ -107,6 +105,8 @@
     
 ;; Converts complex expression using the above function rco_atom only if there is a need to
 ;; introduce a new variable, for other cases rco_exp function handles the expression
+;; READ rco_exp --- output ---> As an expression which does not contain any complex operation,
+;; but it might not necessarily be an atom.
 (define (rco_exp exp)
   (match exp
     [(Var x) (Var x)]
@@ -140,6 +140,7 @@
 
 ;; The input to this pass will be the L_var with all the complex operation removed
 ;; which means operands of each operation will be atoms, (i.e Var or Int)
+;; This is used to generate the tail in the grammar on page 25
 (define (explicate-tail exp)
   (match exp
     [(Var x) (values (Return (Var x)) (list))]
@@ -150,7 +151,7 @@
      (explicate-assign rhs x tail-exp var-list)]
     [_ (error "explicate-tail unhandled case" exp)]))
 
-;; This function is for the creating assignment statement in C_var language (Refer the grammar)
+;; This function is for the creating assignment statement in C_var language (Refer the grammar on Page 25)
 (define (explicate-assign exp x cont var-list)
   (match exp
     [(Var var)
