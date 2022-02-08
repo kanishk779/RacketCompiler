@@ -92,17 +92,22 @@
        [(and (not (atom? e1)) (not (atom? e2)))
         (define new-name-1 (gensym "tmp"))
         (define new-name-2 (gensym "tmp"))
-        (Let new-name-1 (rco_exp e1) (Let new-name-2 (rco_exp e2) (Prim '+ (list (Var new-name-1) (Var new-name-2)))))]
+        (Let new-name-1 (rco_exp e1)
+             (Let new-name-2 (rco_exp e2)
+                  (Prim '+ (list (Var new-name-1) (Var new-name-2)))))]
        [(atom? e1)
         (define new-name (gensym "tmp"))
-        (Let new-name (rco_exp e2) (Prim '+ (list e1 (Var new-name))))]
+        (Let new-name (rco_exp e2)
+             (Prim '+ (list e1 (Var new-name))))]
        [(atom? e2)
         (define new-name (gensym "tmp"))
-        (Let new-name (rco_exp e1) (Prim '+ (list (Var new-name) e2)))]
+        (Let new-name (rco_exp e1)
+             (Prim '+ (list (Var new-name) e2)))]
        )]
     [(Prim '- (list e1))
      (define new-name (gensym "tmp"))
-     (Let new-name (rco_exp e1) (Prim '- (list (Var new-name))))]))
+     (Let new-name (rco_exp e1)
+          (Prim '- (list (Var new-name))))]))
     
 ;; Converts complex expression using the above function rco_atom only if there is a need to
 ;; introduce a new variable, for other cases rco_exp function handles the expression
@@ -144,9 +149,15 @@
 ;; This is used to generate the tail in the grammar on page 25
 (define (explicate-tail exp)
   (match exp
-    [(Var x) (values (Return (Var x)) (list))]
-    [(Int n) (values (Return (Int n)) (list))]
-    [(Prim op es) (values (Return (Prim op es)) (list))]
+    [(Var x)
+     (values
+      (Return (Var x)) (list))]
+    [(Int n)
+     (values
+      (Return (Int n)) (list))]
+    [(Prim op es)
+     (values
+      (Return (Prim op es)) (list))]
     [(Let x rhs body)
      (define-values (tail-exp var-list) (explicate-tail body))
      (explicate-assign rhs x tail-exp var-list)]
@@ -156,11 +167,20 @@
 (define (explicate-assign exp x cont var-list)
   (match exp
     [(Var var)
-     (values (Seq (Assign (Var x) (Var var)) cont) (cons x var-list))]
+     (values
+      (Seq
+       (Assign (Var x) (Var var)) cont)
+      (cons x var-list))]
     [(Int n)
-     (values (Seq (Assign (Var x) (Int n)) cont) (cons x var-list))]
+     (values
+      (Seq
+       (Assign (Var x) (Int n)) cont)
+      (cons x var-list))]
     [(Prim op es)
-     (values (Seq (Assign (Var x) (Prim op es)) cont) (cons x var-list))]
+     (values
+      (Seq
+       (Assign (Var x) (Prim op es)) cont)
+      (cons x var-list))]
     [(Let y rhs body)
      (define-values (tail-exp new-var-list) (explicate-assign body x cont var-list))
      (explicate-assign rhs y tail-exp new-var-list)]
@@ -193,7 +213,7 @@
       (Instr 'movq (list (Var x) var)))]
     [(Prim 'read '())
      (list
-      (Callq 'read_int)
+      (Callq 'read_int 0)
       (Instr 'movq (list (Reg 'rax) var)))]
     [(Prim '- (list a))
      (list
@@ -231,7 +251,7 @@
       (select-tail tail))]
     [(Return (Prim 'read '()))
      (list
-      (Callq 'read_int)
+      (Callq 'read_int 0)
       (Jmp 'conclusion))]
     [(Return es)
      (append
