@@ -320,9 +320,32 @@
         (define new-exp (dict-set '() 'start new-block))
         (X86Program info new-exp)])]))
 
+;; Handles transformation of single instruction
+(define (patch-one-instr instr)
+  (match instr
+    [(Instr op (list (Deref 'rbp int1) (Deref 'rbp int2)))
+     (list
+      (Instr 'movq (list (Deref 'rbp int1) (Reg 'rax)))
+      (Instr op (list (Reg 'rax) (Deref 'rbp int2))))]
+    [_ (list instr)]))
+
+;; changes movq and addq with two stack locations as the arguments, since in X86 only 1 memory reference
+;; per instruction is allowed
+(define (patch-helper instr)
+  (if (null? instr)
+      (list)
+      (append (patch-one-instr (car instr)) (patch-helper (cdr instr)))))
+
 ;; patch-instructions : psuedo-x86 -> x86
 (define (patch-instructions p)
-  (error "TODO: code goes here (patch-instructions)"))
+  (match p
+    [(X86Program info exp)
+     (define block (cdr (car exp)))
+     (match block
+       [(Block block-info instr)
+        (define new-block (Block block-info (patch-helper instr)))
+        (define new-exp (dict-set '() 'start new-block))
+        (X86Program info new-exp)])]))
 
 ;; prelude-and-conclusion : x86 -> x86
 (define (prelude-and-conclusion p)
@@ -338,7 +361,7 @@
      ("explicate control" ,explicate-control ,interp-Cvar)
      ("instruction selection" ,select-instructions ,interp-x86-0)
      ("assign homes" ,assign-homes ,interp-x86-0)
-     ;; ("patch instructions" ,patch-instructions ,interp-x86-0)
+     ("patch instructions" ,patch-instructions ,interp-x86-0)
      ;; ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
      ))
 
