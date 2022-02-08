@@ -272,12 +272,53 @@
        (define instr (select-tail (cdr (car e))))
        (define block (Block info instr))
        (define exp (dict-set '() 'start block))
-       (define new-info (dict-set '() 'stack-size (give-st-size (cdr (car info)))))
+       (define new-info (dict-set info 'stack-size (give-st-size (cdr (car info)))))
        (X86Program new-info exp)]))
+
+
+;; change a variable into the Deref struct
+(define (handle-arg arg mapping)
+  (match arg
+    [(Var x)
+     (Deref 'rbp (dict-ref mapping x))]
+    [_ arg]))
+
+;; Replaces the variables with stack location with respect to rbp (base-pointer)
+(define (single-instr instr mapping)
+  (match instr
+    [(Instr op (list a1 a2))  ;; Handles movq and addq
+     (Instr op (list (handle-arg a1 mapping) (handle-arg a2 mapping)))]
+    [(Instr 'popq (list a))   ;; Handles popq
+     instr]
+    [(Instr op (list a))      ;; Handles pushq and negq
+     (Instr op (list (handle-arg a mapping)))]
+    [_ instr]))               ;; Handles callq, Jmp, Retq
+
+;; helper for assign-homes
+(define (assign-home-helper instr mapping)
+  (if (null? instr)
+      (list)
+      (cons (single-instr (car instr) mapping) (assign-home-helper (cdr instr) mapping))))
+
+
+;; creates a mapping from variable names to integers (Which are the offset fromt the rbp register)
+(define (create-mapping var-list index)
+  (if (null? var-list)
+      (list)
+      (dict-set (create-mapping (cdr var-list) (+ 1 index)) (car var-list) (* index -8))))
+
 
 ;; assign-homes : pseudo-x86 -> pseudo-x86
 (define (assign-homes p)
-  (error "TODO: code goes here (assign-homes)"))
+  (match p
+    [(X86Program info exp)
+     (define block (cdr (car exp)))
+     (match block
+       [(Block block-info instr)
+        (define mapping (create-mapping (dict-ref info 'locals) 1))
+        (define new-block (Block block-info (assign-home-helper instr mapping)))
+        (define new-exp (dict-set '() 'start new-block))
+        (X86Program info new-exp)])]))
 
 ;; patch-instructions : psuedo-x86 -> x86
 (define (patch-instructions p)
@@ -296,7 +337,7 @@
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar)
      ("explicate control" ,explicate-control ,interp-Cvar)
      ("instruction selection" ,select-instructions ,interp-x86-0)
-     ;; ("assign homes" ,assign-homes ,interp-x86-0)
+     ("assign homes" ,assign-homes ,interp-x86-0)
      ;; ("patch instructions" ,patch-instructions ,interp-x86-0)
      ;; ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
      ))
