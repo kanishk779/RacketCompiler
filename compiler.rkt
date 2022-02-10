@@ -347,9 +347,31 @@
         (define new-exp (dict-set '() 'start new-block))
         (X86Program info new-exp)])]))
 
+
+(define (conclusion-gen stack-size)
+  (list
+  (Instr 'addq (list (Imm stack-size) (Reg 'rsp)))
+  (Instr 'popq (list (Reg 'rbp)))
+  (Retq)))
+
+;; generates main block
+(define (main-gen stack-size)
+  (list 
+  (Instr 'pushq (list (Reg 'rbp))) 
+  (Instr 'movq (list (Reg 'rsp) (Reg 'rbp)))
+  (Instr 'subq (list (Imm stack-size) (Reg 'rsp)))
+  (Jmp 'start)))
+
 ;; prelude-and-conclusion : x86 -> x86
 (define (prelude-and-conclusion p)
-  (error "TODO: code goes here (prelude-and-conclusion)"))
+  (match p
+    [(X86Program info exp) 
+    (define stack-size (dict-ref info 'stack-size))
+    (define main-block (Block '() (main-gen stack-size)))
+    (define conclusion-block (Block '() (conclusion-gen stack-size)))
+    (define new-exp (dict-set exp 'main main-block))
+    (define final-exp (dict-set new-exp 'conclusion conclusion-block))
+    (X86Program info final-exp)]))
 
 ;; Define the compiler passes to be used by interp-tests and the grader
 ;; Note that your compiler file (the file that defines the passes)
@@ -362,6 +384,6 @@
      ("instruction selection" ,select-instructions ,interp-x86-0)
      ("assign homes" ,assign-homes ,interp-x86-0)
      ("patch instructions" ,patch-instructions ,interp-x86-0)
-     ;; ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
+     ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
      ))
 
