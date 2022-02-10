@@ -8,6 +8,7 @@
 (require "utilities.rkt")
 (require "interp.rkt")
 (provide (all-defined-out))
+(AST-output-syntax 'concrete-syntax)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Lint examples
@@ -373,12 +374,52 @@
     (define final-exp (dict-set new-exp 'conclusion conclusion-block))
     (X86Program info final-exp)]))
 
+;; checks if an expression is Integer
+(define (int? exp)
+  (match exp
+    [(Int n) #t]
+    [_ #f]))
+
+;; partially evaluate an expression in L_var
+(define (pe-exp-lvar env  exp)
+  (match exp
+    [(Var x)
+     (define value (dict-ref env x))
+     (cond
+       [(int? value) value]
+       [else (Var x)])]
+    [(Let x e body)
+     (define new-exp (pe-exp-lvar env e))
+     (define new-env (dict-set env x new-exp))
+     (define body-result (pe-exp-lvar new-env body))
+     (cond
+       [(int? body-result) body-result]
+       [else (Let x new-exp body-result)])]
+    [(Int n)
+     (Int n)]
+    [(Prim 'read '())
+     (Prim 'read '())]
+    [(Prim '- (list e1))
+     (pe-neg (pe-exp-lvar env e1))]
+    [(Prim '+ (list e1 e2))
+     (pe-add (pe-exp-lvar env e1) (pe-exp-lvar env e2))]))
+
+;; Partial-evaluator for L_var
+(define (partial-lvar p)
+  (match p
+    [(Program info exp)
+     (Program info (pe-exp-lvar '() exp))]))
+
+
+
 ;; Define the compiler passes to be used by interp-tests and the grader
 ;; Note that your compiler file (the file that defines the passes)
 ;; must be named "compiler.rkt"
 (define compiler-passes
-  `( ("uniquify" ,uniquify ,interp-Lvar)
-     ;; Uncomment the following passes as you finish them.
+  `(
+    ;; Uncomment the following passes as you finish them.
+    ;; ("partial-evaluator" ,partial-lvar ,interp-Lvar)
+     ("uniquify" ,uniquify ,interp-Lvar)
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar)
      ("explicate control" ,explicate-control ,interp-Cvar)
      ("instruction selection" ,select-instructions ,interp-x86-0)
