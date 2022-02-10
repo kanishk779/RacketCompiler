@@ -2264,9 +2264,7 @@ Changelog:
 						    (format " < ./tests/~a.in" test-name)
 						    "")]
 					 [output (if (file-exists? (format "./tests/~a.res" test-name))
-						     (call-with-input-file
-							 (format "./tests/~a.res" test-name)
-						       (lambda (f) (read-line f)))
+						     (call-with-input-file (format "./tests/~a.res" test-name) (lambda (f) (read-line f)))
 						     "42")]
 					 [error-expected (file-exists? (format "./tests/~a.err" test-name))])
 				     (let* ([command (format "./tests/~a.out ~a" test-name input)]
