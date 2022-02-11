@@ -410,7 +410,49 @@
     [(Program info exp)
      (Program info (pe-exp-lvar '() exp))]))
 
+;; process addition on residual form
+(define (opt-pe-add e1 e2)
+  (match* (e1 e2)
+    [((Int n1) (Int n2))
+     (Int (fx+ n1 n2))]
+    [((Int n1) (Prim '+ (list (Int n2) inert)))
+     (Prim '+ (list (Int (fx+ n1 n2)) inert))]
+    [((Prim '+ (list (Int n1) inert)) (Int n2))
+     (Prim '+ (list (Int (fx+ n1 n2)) inert))]
+    [((Prim '+ (list (Int n1) inert1)) (Prim '+ (list (Int n2) inert2)))
+     (Prim '+ (list (Int (fx+ n1 n2)) (Prim '+ (list inert1 inert2))))]
+    [(_ _) (Prim '+ (list e1 e2))]))
+    
 
+;; partially evaluate an expression to the 'Residual' form of expression (Refer page 34).
+(define (opt-pe-exp-lvar env exp)
+  (match exp
+    [(Var x)
+     (define value (dict-ref env x))
+     (cond
+       [(int? value) value]
+       [else (Var x)])]
+    [(Int n)
+     (Int n)]
+    [(Prim 'read '())
+     (Prim 'read '())]
+    [(Prim '- (list e1))
+     (pe-neg (opt-pe-exp-lvar env e1))]
+    [(Prim '+ (list e1 e2))
+     (opt-pe-add (opt-pe-exp-lvar env e1) (opt-pe-exp-lvar env e2))]
+    [(Let x e body)
+     (define new-exp (opt-pe-exp-lvar env e))
+     (define new-env (dict-set env x new-exp))
+     (define body-result (opt-pe-exp-lvar new-env body))
+     (cond
+       [(int? body-result) body-result]
+       [else (Let x new-exp body-result)])]))
+
+;; Optimized partial-evaluator for L_var
+(define (opt-par-lvar p)
+  (match p
+    [(Program info exp)
+     (Program info (opt-pe-exp-lvar '() exp))]))
 
 ;; Define the compiler passes to be used by interp-tests and the grader
 ;; Note that your compiler file (the file that defines the passes)
@@ -418,7 +460,8 @@
 (define compiler-passes
   `(
     ;; Uncomment the following passes as you finish them.
-    ;; ("partial-evaluator" ,partial-lvar ,interp-Lvar)
+     ;;("partial-evaluator" ,partial-lvar ,interp-Lvar)
+     ;;("optimized-par-eval" ,opt-par-lvar ,interp-Lvar)
      ("uniquify" ,uniquify ,interp-Lvar)
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar)
      ("explicate control" ,explicate-control ,interp-Cvar)
