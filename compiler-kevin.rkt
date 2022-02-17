@@ -8,7 +8,6 @@
 (require "utilities.rkt")
 (require "interp.rkt")
 (provide (all-defined-out))
-(AST-output-syntax 'concrete-syntax)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Lint examples
@@ -374,97 +373,57 @@
     (define final-exp (dict-set new-exp 'conclusion conclusion-block))
     (X86Program info final-exp)]))
 
-;; checks if an expression is Integer
-(define (int? exp)
-  (match exp
-    [(Int n) #t]
-    [_ #f]))
+(define (pe_neg r)
+  (match r
+    [(Int n) (Int (fx- 0 n))]
+    [else (Prim '- (list r))]))
+(define (pe_add r1 r2)
+  (match* (r1 r2)
+    [((Int n1) (Int n2)) (Int (fx+ n1 n2))]
+    [(n1 (Int n2)) (Prim '+ (list (Int n2) n1))]
+    [(_ _) (Prim '+ (list r1 r2))]))
 
-;; partially evaluate an expression in L_var
-(define (pe-exp-lvar env  exp)
-  (match exp
-    [(Var x)
-     (define value (dict-ref env x))
-     (cond
-       [(int? value) value]
-       [else (Var x)])]
-    [(Let x e body)
-     (define new-exp (pe-exp-lvar env e))
-     (define new-env (dict-set env x new-exp))
-     (define body-result (pe-exp-lvar new-env body))
-     (cond
-       [(int? body-result) body-result]
-       [(int? new-exp) body-result]
-       [else (Let x new-exp body-result)])]
-    [(Int n)
-     (Int n)]
-    [(Prim 'read '())
-     (Prim 'read '())]
-    [(Prim '- (list e1))
-     (pe-neg (pe-exp-lvar env e1))]
-    [(Prim '+ (list e1 e2))
-     (pe-add (pe-exp-lvar env e1) (pe-exp-lvar env e2))]))
-
-;; Partial-evaluator for L_var
-(define (partial-lvar p)
+(define (pe_exp e)
+  (match e
+    [(Int n) (Int n)]
+    [(Prim 'read '()) (Prim 'read '())]
+    [(Prim '- (list e1)) (pe_neg (pe_exp e1))]
+    [(Prim '+ (list e1 e2)) 
+        (define exp (pe_add (pe_exp e1) (pe_exp e2)))
+        (match exp
+            [(Prim '+ (list (Int n1) n2))
+                (match n2
+                    [(Prim '+ (list (Int x) exp2)) (Prim '+ (list (fx+ x n1) exp2))]
+                    [_ exp])]
+            [_ exp])]
+    [(Var x) (Var x)]
+    [(Let x e1 body) (Let x (pe_exp e1) (pe_exp body))]))
+(define (pe_Lvar p)
   (match p
-    [(Program info exp)
-     (Program info (pe-exp-lvar '() exp))]))
+    [(Program '() e) (Program '() (pe_exp e))]))
 
-;; process addition on residual form
-(define (opt-pe-add e1 e2)
-  (match* (e1 e2)
-    [((Int n1) (Int n2))
-     (Int (fx+ n1 n2))]
-    [((Int n1) (Prim '+ (list (Int n2) inert)))
-     (Prim '+ (list (Int (fx+ n1 n2)) inert))]
-    [((Prim '+ (list (Int n1) inert)) (Int n2))
-     (Prim '+ (list (Int (fx+ n1 n2)) inert))]
-    [((Prim '+ (list (Int n1) inert1)) (Prim '+ (list (Int n2) inert2)))
-     (Prim '+ (list (Int (fx+ n1 n2)) (Prim '+ (list inert1 inert2))))]
-    [(_ _) (Prim '+ (list e1 e2))]))
-    
+; (define (pe_exp e)
+;   (match e
+;     [(Int n) (Int n)]
+;     [(Prim 'read '()) (Prim 'read '())]
+;     [(Prim '- (list e1)) (pe_neg (pe_exp e1))]
+;     [(Prim '+ (list e1 e2)) (pe_add (pe_exp e1) (pe_exp e2))]
+;     [(Prim '- (list e1 e2)) (pe_sub (pe_exp e1) (pe_exp e2))]
+;     [(Var x) (Var x)]
+;     [(Let x e1 body) (Let x (pe_exp e1) (pe_exp body))]))
+; (define (pe_Lvar p)
+;   (match p
+;     [(Program '() e) (Program '() (pe_exp e))]))
 
-;; partially evaluate an expression to the 'Residual' form of expression (Refer page 34).
-(define (opt-pe-exp-lvar env exp)
-  (match exp
-    [(Var x)
-     (define value (dict-ref env x))
-     (cond
-       [(int? value) value]
-       [else (Var x)])]
-    [(Int n)
-     (Int n)]
-    [(Prim 'read '())
-     (Prim 'read '())]
-    [(Prim '- (list e1))
-     (pe-neg (opt-pe-exp-lvar env e1))]
-    [(Prim '+ (list e1 e2))
-     (opt-pe-add (opt-pe-exp-lvar env e1) (opt-pe-exp-lvar env e2))]
-    [(Let x e body)
-     (define new-exp (opt-pe-exp-lvar env e))
-     (define new-env (dict-set env x new-exp))
-     (define body-result (opt-pe-exp-lvar new-env body))
-     (cond
-       [(int? body-result) body-result]
-       [(int? new-exp) body-result]
-       [else (Let x new-exp body-result)])]))
-
-;; Optimized partial-evaluator for L_var
-(define (opt-par-lvar p)
-  (match p
-    [(Program info exp)
-     (Program info (opt-pe-exp-lvar '() exp))]))
 
 ;; Define the compiler passes to be used by interp-tests and the grader
 ;; Note that your compiler file (the file that defines the passes)
 ;; must be named "compiler.rkt"
 (define compiler-passes
   `(
-    ;; Uncomment the following passes as you finish them.
-    ;  ("partial-evaluator" ,partial-lvar ,interp-Lvar)
-     ("optimized-par-eval" ,opt-par-lvar ,interp-Lvar)
-     ("uniquify" ,uniquify ,interp-Lvar)
+    ("Partial eval", pe_Lvar, interp-Lvar) 
+    ("uniquify" ,uniquify ,interp-Lvar)
+     ;; Uncomment the following passes as you finish them.
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar)
      ("explicate control" ,explicate-control ,interp-Cvar)
      ("instruction selection" ,select-instructions ,interp-x86-0)
