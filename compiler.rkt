@@ -70,12 +70,14 @@
        (define new-env (dict-set env x new-name))
        (Let new-name rhs ((uniquify-exp new-env) body))]
       [(Prim op es)
-       (Prim op (for/list ([e es]) ((uniquify-exp env) e)))])))
+       (Prim op (for/list ([e es]) ((uniquify-exp env) e)))]
+      [_ (error "Error: Unidentified Case")])))
 
 ;; uniquify : R1 -> R1
 (define (uniquify p)
   (match p
-    [(Program info e) (Program info ((uniquify-exp '()) e))]))
+    [(Program info e) (Program info ((uniquify-exp '()) e))]
+    [_ (error "Error: Unidentified Case")]))
 
 ;; Checks if an expression is atomic (i.e a variable or an integer)
 (define (atom? exp)
@@ -104,11 +106,13 @@
         (define new-name (gensym "tmp"))
         (Let new-name (rco_exp e1)
              (Prim '+ (list (Var new-name) e2)))]
+       [else (error "Error: Unidentified Case")]
        )]
     [(Prim '- (list e1))
      (define new-name (gensym "tmp"))
      (Let new-name (rco_exp e1)
-          (Prim '- (list (Var new-name))))]))
+          (Prim '- (list (Var new-name))))]
+    [else (error "Error: Unidentified Case")]))
     
 ;; Converts complex expression using the above function rco_atom only if there is a need to
 ;; introduce a new variable, for other cases rco_exp function handles the expression
@@ -128,7 +132,8 @@
          (Prim '- (list e1))
          (rco_atom exp))]
     [(Let x e body)
-     (Let x (rco_exp e) (rco_exp body))]))
+     (Let x (rco_exp e) (rco_exp body))]
+    [_ (error "Error: Unidentified case")]))
          
 (define (test_rco p)
   (assert "testing rco"
@@ -143,7 +148,8 @@
     
 (define (remove-complex-opera* p)
   (match p
-    [(Program info e) (Program info (rco_exp e))]))
+    [(Program info e) (Program info (rco_exp e))]
+    [_ (error "Error: Unidentified case")]))
 
 ;; The input to this pass will be the L_var with all the complex operation removed
 ;; which means operands of each operation will be atoms, (i.e Var or Int)
@@ -195,7 +201,8 @@
      (define-values (tail-exp var-list) (explicate-tail e))
      (define exp-dict (dict-set '() 'start tail-exp))
      (define info-dict (dict-set '() 'locals var-list))
-     (CProgram info-dict exp-dict)]))
+     (CProgram info-dict exp-dict)]
+    [_ (error "Error: Unidentified case")]))
 
 ;; Convert (Int n) --> (Imm n) so as to follow the X86 grammar
 (define (int->imm exp)
@@ -223,7 +230,8 @@
     [(Prim '+ (list a1 a2))
      (list
       (Instr 'movq (list (int->imm a1) var))
-      (Instr 'addq (list (int->imm a2) var)))]))
+      (Instr 'addq (list (int->imm a2) var)))]
+    [_ (error "Error: Unidentified Case")]))
 
 ;; select for statement, this function handles the special case when one of
 ;; the rhs of assignment is same as lhs variable.
@@ -241,7 +249,8 @@
         (Instr 'addq (list (int->imm a1) (Var var)))]
        [else
         (select-exp (Prim '+ (list a1 (Var y))) (Var var))])]
-    [(Assign (Var var) es) (select-exp es (Var var))]))
+    [(Assign (Var var) es) (select-exp es (Var var))]
+    [_ (error "Error: Unidentified Case")]))
 
 ;; select for tail (Refer the grammar of C_var for tail)
 (define (select-tail exp)
@@ -257,7 +266,8 @@
     [(Return es)
      (append
       (select-exp es (Reg 'rax))
-      (list (Jmp 'conclusion)))]))
+      (list (Jmp 'conclusion)))]
+    [_ (error "Error: Unidentified Case")]))
 
 ;; Give stack-size (It must be a multiple of 16)
 (define (give-st-size var-list)
@@ -274,7 +284,8 @@
        (define block (Block info instr))
        (define exp (dict-set '() 'start block))
        (define new-info (dict-set info 'stack-size (give-st-size (cdr (car info)))))
-       (X86Program new-info exp)]))
+       (X86Program new-info exp)]
+    [_ (error "Error: Unidentified Case")]))
 
 
 ;; change a variable into the Deref struct
@@ -319,7 +330,9 @@
         (define mapping (create-mapping (dict-ref info 'locals) 1))
         (define new-block (Block block-info (assign-home-helper instr mapping)))
         (define new-exp (dict-set '() 'start new-block))
-        (X86Program info new-exp)])]))
+        (X86Program info new-exp)]
+       [_ (error "Error: Unidentified Case")])]
+    [_ (error "Error: Unidentified Case")]))
 
 ;; Handles transformation of single instruction
 (define (patch-one-instr instr)
@@ -346,7 +359,9 @@
        [(Block block-info instr)
         (define new-block (Block block-info (patch-helper instr)))
         (define new-exp (dict-set '() 'start new-block))
-        (X86Program info new-exp)])]))
+        (X86Program info new-exp)]
+       [_ (error "Error: Unidentified Case")])]
+    [_ (error "Error: Unidentified Case")]))
 
 
 (define (conclusion-gen stack-size)
@@ -372,7 +387,8 @@
     (define conclusion-block (Block '() (conclusion-gen stack-size)))
     (define new-exp (dict-set exp 'main main-block))
     (define final-exp (dict-set new-exp 'conclusion conclusion-block))
-    (X86Program info final-exp)]))
+    (X86Program info final-exp)]
+    [_ (error "Error: Unidentified Case")]))
 
 ;; checks if an expression is Integer
 (define (int? exp)
@@ -402,13 +418,15 @@
     [(Prim '- (list e1))
      (pe-neg (pe-exp-lvar env e1))]
     [(Prim '+ (list e1 e2))
-     (pe-add (pe-exp-lvar env e1) (pe-exp-lvar env e2))]))
+     (pe-add (pe-exp-lvar env e1) (pe-exp-lvar env e2))]
+    [_ (error "Error: Unidentified Case")]))
 
 ;; Partial-evaluator for L_var
 (define (partial-lvar p)
   (match p
     [(Program info exp)
-     (Program info (pe-exp-lvar '() exp))]))
+     (Program info (pe-exp-lvar '() exp))]
+    [_ (error "Error: Unidentified Case")]))
 
 ;; process addition on residual form
 (define (opt-pe-add e1 e2)
@@ -446,13 +464,15 @@
      (define body-result (opt-pe-exp-lvar new-env body))
      (cond
        [(int? body-result) body-result]
-       [else (Let x new-exp body-result)])]))
+       [else (Let x new-exp body-result)])]
+    [_ (error "Error: Unidentified Case")]))
 
 ;; Optimized partial-evaluator for L_var
 (define (opt-par-lvar p)
   (match p
     [(Program info exp)
-     (Program info (opt-pe-exp-lvar '() exp))]))
+     (Program info (opt-pe-exp-lvar '() exp))]
+    [_ (error "Error: Unidentified Case")]))
 
 ;; Define the compiler passes to be used by interp-tests and the grader
 ;; Note that your compiler file (the file that defines the passes)
