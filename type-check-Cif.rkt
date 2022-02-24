@@ -31,7 +31,8 @@
         [else
          ((super type-check-exp env) e)]
         ))
-    
+
+    ;; It takes block-env and blocks as extra parameters
     (define/override ((type-check-tail env block-env blocks) t)
       (debug 'type-check-tail "Cif" t)
       (match t

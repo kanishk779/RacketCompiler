@@ -20,6 +20,7 @@
 (define (flip-exp e)
   (match e
     [(Var x) e]
+    [(Int n) e]
     [(Prim 'read '()) (Prim 'read '())]
     [(Prim '- (list e1)) (Prim '- (list (flip-exp e1)))]
     [(Prim '+ (list e1 e2)) (Prim '+ (list (flip-exp e2) (flip-exp e1)))]))
@@ -324,15 +325,15 @@
 (define (assign-homes p)
   (match p
     [(X86Program info exp)
-     (define block (cdr (car exp)))
+     (define block (dict-ref exp 'start))
      (match block
        [(Block block-info instr)
         (define mapping (create-mapping (dict-ref info 'locals) 1))
         (define new-block (Block block-info (assign-home-helper instr mapping)))
         (define new-exp (dict-set '() 'start new-block))
         (X86Program info new-exp)]
-       [_ (error "Error: Unidentified Case")])]
-    [_ (error "Error: Unidentified Case")]))
+       [_ (error "Error: Unidentified Case while matching block")])]
+    [_ (error "Error: Unidentified Case while matching program after select instruction pass")]))
 
 ;; Handles transformation of single instruction
 (define (patch-one-instr instr)
@@ -364,13 +365,14 @@
     [_ (error "Error: Unidentified Case")]))
 
 
+;; generates the Conclusion
 (define (conclusion-gen stack-size)
   (list
   (Instr 'addq (list (Imm stack-size) (Reg 'rsp)))
   (Instr 'popq (list (Reg 'rbp)))
   (Retq)))
 
-;; generates main block
+;; generates Main block
 (define (main-gen stack-size)
   (list 
   (Instr 'pushq (list (Reg 'rbp))) 
@@ -467,27 +469,106 @@
        [(int? body-result) body-result]
        [(int? new-exp) body-result]
        [else (Let x new-exp body-result)])]
-    [_ (error "Error: Unidentified Case")]))
+    [_ (error "Error: Unidentified Case while matching expression for optimised partial evaluator")]))
 
 ;; Optimized partial-evaluator for L_var
 (define (opt-par-lvar p)
   (match p
     [(Program info exp)
      (Program info (opt-pe-exp-lvar '() exp))]
-    [_ (error "Error: Unidentified Case")]))
+    [_ (error "Error: Unidentified Case while matching program for optimised partial evaluator")]))
+
+;; (set v ....) -> creates a set with specified values, similary there are other functions like
+;; (set-union set1 set2), (set-subtract set1 set2), (set-member? set1 v), (set-count set1), (set->list set1)
+
+;; Finds the arguments which are in read set of an instruction
+(define (read-set instr)
+  (match instr
+    [(Instr 'movq (list a b))
+     (match a
+       [(Imm x) (set)]
+       [_ (set a)])]
+    [(Instr 'addq (list a b))
+     (match a
+       [(Imm x) (set b)]
+       [_ (set a b)])]
+    [(Instr 'negq (list a))
+     (set a)]
+    [(Instr 'popq (list a))
+     (set)]
+    [(Instr 'pushq (list a))
+     (set a)]
+    [(Callq label arity)
+     (set)]  ;; for now we return an empty set, but if arity > 0, then we need to return the register used for parameter passing
+    [(Jmp 'conclusion) (set (Reg 'rax) (Reg 'rsp))] ;; We can hard-core this because we know conclusion block reads from rax and rsp
+    [(Retq)
+     (set (Reg 'rax))]  ;; Check this, I am not sure if it is correct, but the logic here is that
+                        ;; when we return from a function, rax will be read by the caller.
+    [_ (set)]))  ;; for everything else we return empty set
+
+(define caller-saved (list (Reg 'rax) (Reg 'rcx) (Reg 'rdx) (Reg 'rsi) (Reg 'rdi) (Reg 'r8) (Reg 'r9) (Reg 'r10) (Reg 'r11)))
+(define callee-saved (list (Reg 'rsp) (Reg 'rbp) (Reg 'rbx) (Reg 'r12) (Reg 'r13) (Reg 'r14) (Reg 'r15)))
+
+;; Finds the arguments which are in the write set of instruction 
+(define (write-set instr)
+  (match instr
+    [(Instr 'movq (list a b))
+     (set b)]
+    [(Instr 'addq (list a b))
+     (set b)]
+    [(Instr 'negq (list a))
+     (set a)]
+    [(Instr 'popq (list a))
+     (set a)]
+    [(Instr 'pushq (list a))
+     (set)]
+    [(Callq label arity)
+     (list->set caller-saved)]  ;; All the caller-saved registers are in the write set as mentioned on Page 36.
+    [(Retq) (set)]
+    [_ (set)]))
+  
+
+;; Takes a X86 instruction and live-before set and gives the live after set
+(define (live-before-op instr live-before)
+  (set-union (set-subtract live-before (write-set instr)) (read-set instr)))
+  
+;; Takes a list of instructions and compute the live after sets, (list of sets)
+(define (live-before instrs live-before-set)
+  (match instrs
+    [(list) (list)]
+    [_
+     (define new-set (live-before-op (car instrs) live-before-set))
+     (cons new-set (live-before (cdr instrs) new-set))]))
+     
+;; Uncover-live pass
+(define (uncover-live-pass p)
+  (match p
+    [(X86Program info exp)
+     (define block (dict-ref exp 'start))
+     (match block
+       [(Block b-info instrs)
+        (define live-before-list (live-before (reverse instrs) (set)))
+        (define new-info (dict-set b-info 'live-before (reverse live-before-list)))
+        (define new-block (Block new-info instrs))
+        (X86Program info (dict-set info 'start new-block))]
+       [_ (error "Error: Unidentified Case while matching Block of X86Program in uncover-live-pass")])]
+    [_ (error "Error: Unidentified Case while matching X86Program in uncover-live-pass")]))
+     
+    
 
 ;; Define the compiler passes to be used by interp-tests and the grader
 ;; Note that your compiler file (the file that defines the passes)
 ;; must be named "compiler.rkt"
 (define compiler-passes
   `(
-    ;; Uncomment the following passes as you finish them.
-    ;  ("partial-evaluator" ,partial-lvar ,interp-Lvar)
-     ("optimized-par-eval" ,opt-par-lvar ,interp-Lvar)
+     ;; Uncomment the following passes as you finish them.
+     ;;("partial-evaluator" ,partial-lvar ,interp-Lvar)
+     ;;("optimized-par-eval" ,opt-par-lvar ,interp-Lvar)
      ("uniquify" ,uniquify ,interp-Lvar)
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar)
      ("explicate control" ,explicate-control ,interp-Cvar)
      ("instruction selection" ,select-instructions ,interp-x86-0)
+     ("uncover live" ,uncover-live-pass ,interp-x86-0)
      ("assign homes" ,assign-homes ,interp-x86-0)
      ("patch instructions" ,patch-instructions ,interp-x86-0)
      ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
