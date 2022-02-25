@@ -2,6 +2,7 @@
 (require racket/set racket/stream)
 (require racket/dict)
 (require racket/fixnum)
+(require graph)
 (require "interp-Lint.rkt")
 (require "interp-Lvar.rkt")
 (require "interp-Cvar.rkt")
@@ -553,8 +554,52 @@
         (X86Program info (dict-set info 'start new-block))]
        [_ (error "Error: Unidentified Case while matching Block of X86Program in uncover-live-pass")])]
     [_ (error "Error: Unidentified Case while matching X86Program in uncover-live-pass")]))
-     
+
+;; Process single instruction, returns list of edges, where an edge is a list of two elements, source and vertex
+(define (generate-edges instr live-after-set)
+  (match instr
+    [(Instr 'movq (list a b))
+     (map (lambda (x) (if (or (equal? x a) (equal? x b)) (list) (list b x))) (set->list live-after-set))]
+    [_
+     (define write-sett (write-set instr))
+     (map (lambda (x) (if (equal? (car x) (cadr x)) (list) x)) (cartesian-product (set->list write-sett) (set->list live-after-set)))]
+    ))
+
     
+;; Process list of instructions
+(define (build-graph-exp instrs live-after)
+  (match instrs
+    [(list a) (list)]
+    [_
+     (append
+      (generate-edges (car instrs) (car live-after))
+      (build-graph-exp (cdr instrs) (cdr live-after)))]))
+
+;; Remove empty edges
+(define (remove-empty-edge edges)
+  (if (null? edges)
+      (list)
+      (match (car edges)
+        [(list a b) (cons (car edges) (remove-empty-edge (cdr edges)))]
+        [_ (remove-empty-edge (cdr edges))])))
+
+;; Remove redundant edges
+(define (remove-redundant-edges edges) (set->list (list->set edges)))
+
+;; Build interference graph
+(define (build-graph p)
+  (match p
+    [(X86Program info exp)
+     (define block (dict-ref exp 'start))
+     (match block
+       [(Block b-info instrs)
+        (define live-bef (dict-ref b-info 'live-before))
+        (define edges (build-graph-exp instrs (cdr live-bef)))
+        (define correct-edges  (remove-redundant-edges (remove-empty-edge edges)))
+        (print correct-edges)
+        (X86Program (dict-set info 'conflict (undirected-graph correct-edges)) exp)]
+       [_ (error "Error: Unidentified Case while matching Block of X86Program in build-graph pass")])]
+    [_ (error "Error: Unidentified Case while matching X86Program in build-graph pass")]))
 
 ;; Define the compiler passes to be used by interp-tests and the grader
 ;; Note that your compiler file (the file that defines the passes)
@@ -569,6 +614,7 @@
      ("explicate control" ,explicate-control ,interp-Cvar)
      ("instruction selection" ,select-instructions ,interp-x86-0)
      ("uncover live" ,uncover-live-pass ,interp-x86-0)
+     ("build graph" ,build-graph ,interp-x86-0)
      ("assign homes" ,assign-homes ,interp-x86-0)
      ("patch instructions" ,patch-instructions ,interp-x86-0)
      ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
