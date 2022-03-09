@@ -90,6 +90,12 @@
       [(Var x)
        (Var (dict-ref env x))]
       [(Int n) (Int n)]
+      [(Bool b) (Bool b)]
+      [(If e1 e2 e3)
+       (define e1^ ((uniquify-exp env) e1))
+       (define e2^ ((uniquify-exp env) e2))
+       (define e3^ ((uniquify-exp env) e3))
+       (If e1^ e2^ e3^)]
       [(Let x e body)
        (define rhs ((uniquify-exp env) e))
        (define new-name (gensym x))
@@ -97,13 +103,13 @@
        (Let new-name rhs ((uniquify-exp new-env) body))]
       [(Prim op es)
        (Prim op (for/list ([e es]) ((uniquify-exp env) e)))]
-      [_ (error "Error: Unidentified Case")])))
+      [_ (error "Error: Unidentified Case in uniquify-exp")])))
 
 ;; uniquify : R1 -> R1
 (define (uniquify p)
   (match p
     [(Program info e) (Program info ((uniquify-exp '()) e))]
-    [_ (error "Error: Unidentified Case")]))
+    [_ (error "Error: Unidentified Case in uniquify")]))
 
 ;; Checks if an expression is atomic (i.e a variable or an integer)
 (define (atom? exp)
@@ -635,7 +641,7 @@
      ;;("partial-evaluator" ,partial-lvar ,interp-Lvar)
      ;;("optimized-par-eval" ,opt-par-lvar ,interp-Lvar)
      ("shrink" ,shrink ,interp-Lif)
-     ;;("uniquify" ,uniquify ,interp-Lvar)
+     ("uniquify" ,uniquify ,interp-Lif)
      ;;("remove complex opera*" ,remove-complex-opera* ,interp-Lvar)
      ;;("explicate control" ,explicate-control ,interp-Cvar)
      ;;("instruction selection" ,select-instructions ,interp-x86-0)
