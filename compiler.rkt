@@ -8,6 +8,7 @@
 (require "interp-Cvar.rkt")
 (require "utilities.rkt")
 (require "interp.rkt")
+(require "interp-Lif.rkt")
 (provide (all-defined-out))
 (AST-output-syntax 'concrete-syntax)
 
@@ -57,6 +58,29 @@
 ;; HW1 Passes
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(define (shrink-exp exp)
+  (match exp
+    [(Int int) exp]
+    [(Bool b) exp]
+    [(Var var) exp]
+    [(If e1 e2 e3)
+     (If (shrink-exp e1) (shrink-exp e2) (shrink-exp e3))]
+    [(Let x e body)
+     (Let x (shrink-exp e) (shrink-exp body))]
+    [(Prim 'and (list e1 e2))
+     (If (shrink-exp e1) (shrink-exp e2) (Bool #f))]
+    [(Prim 'or (list e1 e2))
+     (If (shrink-exp e1) (Bool #t) (shrink-exp e2))]
+    [(Prim op es)
+     (Prim op (for/list ([e es]) (shrink-exp e)))]
+    [_ (error "Error: Unidentified Case in shrink-exp")]
+    ))
+
+;; Shrink : L_if -> L_if
+(define (shrink p)
+  (match p
+    [(Program info e) (Program info (shrink-exp e))]
+    [_ (error "Error : Unidentified Case in shrink")]))
 
 ;; The dictionary (i.e env) stores the mapping between the original variable names and the new corresponding variable name that we create using gensym function.
 ;; example (let [x 10] (+ x 10))  ----UNIQUIFY---> (let [x.1 10] (+ x.1 10)) where 'x' has been mapped to 'x.1' using the gensym function
@@ -610,14 +634,15 @@
      ;; Uncomment the following passes as you finish them.
      ;;("partial-evaluator" ,partial-lvar ,interp-Lvar)
      ;;("optimized-par-eval" ,opt-par-lvar ,interp-Lvar)
-     ("uniquify" ,uniquify ,interp-Lvar)
-     ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar)
-     ("explicate control" ,explicate-control ,interp-Cvar)
-     ("instruction selection" ,select-instructions ,interp-x86-0)
-     ("uncover live" ,uncover-live-pass ,interp-x86-0)
-     ("build graph" ,build-graph ,interp-x86-0)
-     ("assign homes" ,assign-homes ,interp-x86-0)
-     ("patch instructions" ,patch-instructions ,interp-x86-0)
-     ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
+     ("shrink" ,shrink ,interp-Lif)
+     ;;("uniquify" ,uniquify ,interp-Lvar)
+     ;;("remove complex opera*" ,remove-complex-opera* ,interp-Lvar)
+     ;;("explicate control" ,explicate-control ,interp-Cvar)
+     ;;("instruction selection" ,select-instructions ,interp-x86-0)
+     ;;("uncover live" ,uncover-live-pass ,interp-x86-0)
+     ;;("build graph" ,build-graph ,interp-x86-0)
+     ;;("assign homes" ,assign-homes ,interp-x86-0)
+     ;;("patch instructions" ,patch-instructions ,interp-x86-0)
+     ;;("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
      ))
 

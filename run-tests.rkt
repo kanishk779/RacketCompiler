@@ -6,6 +6,8 @@
 (require "interp-Cvar.rkt")
 (require "interp.rkt")
 (require "compiler.rkt")
+(require "interp-Lif.rkt")
+(require "type-check-Lif.rkt")
 (debug-level 1)
 (AST-output-syntax 'concrete-syntax)
 
@@ -25,7 +27,7 @@
         all-tests)))
 
 ;; Replace the #f with the type-checker
-(interp-tests "var" #f compiler-passes interp-Lvar "var_test" (tests-for "var"))
+(interp-tests "var" type-check-Lif compiler-passes interp-Lif "var_test" (tests-for "var"))
 
 
 
