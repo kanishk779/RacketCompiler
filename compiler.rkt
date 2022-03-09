@@ -596,7 +596,8 @@
         (define live-bef (dict-ref b-info 'live-before))
         (define edges (build-graph-exp instrs (cdr live-bef)))
         (define correct-edges  (remove-redundant-edges (remove-empty-edge edges)))
-        (print correct-edges)
+        ;;(print correct-edges)
+        (printf (graphviz (undirected-graph correct-edges)))
         (X86Program (dict-set info 'conflict (undirected-graph correct-edges)) exp)]
        [_ (error "Error: Unidentified Case while matching Block of X86Program in build-graph pass")])]
     [_ (error "Error: Unidentified Case while matching X86Program in build-graph pass")]))

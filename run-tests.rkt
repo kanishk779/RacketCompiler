@@ -24,11 +24,12 @@
           (string=? r (car (string-split p "_"))))
         all-tests)))
 
+;; Replace the #f with the type-checker
 (interp-tests "var" #f compiler-passes interp-Lvar "var_test" (tests-for "var"))
 
 
 
 ;; Uncomment the following when all the passes are complete to
 ;; test the final x86 code.
-(compiler-tests "var" #f compiler-passes "var_test" (tests-for "var"))
+;;(compiler-tests "var" #f compiler-passes "var_test" (tests-for "var"))
 
