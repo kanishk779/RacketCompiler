@@ -116,35 +116,35 @@
   (match exp
     [(Var x) #t]
     [(Int n) #t]
+    [(Bool b) #t]
     [_ #f]))
 
 ;; Converts the complex expressions to atomic expressions (Refer the grammar on page 27 for atomic expressions)
 ;; by introducing new variables using the Let feature of Racket.
 (define (rco_atom exp)
   (match exp
-    [(Prim '+ (list e1 e2))
+    [(Prim op (list e1 e2))
      (cond
        [(and (not (atom? e1)) (not (atom? e2)))
         (define new-name-1 (gensym "tmp"))
         (define new-name-2 (gensym "tmp"))
         (Let new-name-1 (rco_exp e1)
              (Let new-name-2 (rco_exp e2)
-                  (Prim '+ (list (Var new-name-1) (Var new-name-2)))))]
+                  (Prim op (list (Var new-name-1) (Var new-name-2)))))]
        [(atom? e1)
         (define new-name (gensym "tmp"))
         (Let new-name (rco_exp e2)
-             (Prim '+ (list e1 (Var new-name))))]
+             (Prim op (list e1 (Var new-name))))]
        [(atom? e2)
         (define new-name (gensym "tmp"))
         (Let new-name (rco_exp e1)
-             (Prim '+ (list (Var new-name) e2)))]
-       [else (error "Error: Unidentified Case")]
+             (Prim op (list (Var new-name) e2)))]
        )]
-    [(Prim '- (list e1))
+    [(Prim op (list e1))
      (define new-name (gensym "tmp"))
      (Let new-name (rco_exp e1)
-          (Prim '- (list (Var new-name))))]
-    [else (error "Error: Unidentified Case")]))
+          (Prim op (list (Var new-name))))]
+    [else (error "Error: Unidentified Case in rco_atom")]))
     
 ;; Converts complex expression using the above function rco_atom only if there is a need to
 ;; introduce a new variable, for other cases rco_exp function handles the expression
@@ -154,18 +154,23 @@
   (match exp
     [(Var x) (Var x)]
     [(Int n) (Int n)]
+    [(Bool b) (Bool b)]
     [(Prim 'read '()) (Prim 'read '())]
-    [(Prim '+ (list e1 e2))
-     (if (and (atom? e1) (atom? e2))
-         (Prim '+ (list e1 e2))
-         (rco_atom exp))]
-    [(Prim '- (list e1))
+    ;; This will cover,  not, - (unary) 
+    [(Prim op (list e1))
      (if (atom? e1)
-         (Prim '- (list e1))
+         (Prim op (list e1))
          (rco_atom exp))]
+    ;; This will cover, eq?, <, >, <= , >=, +, - (binary)
+    [(Prim op (list e1 e2))
+     (if (and (atom? e1) (atom? e2))
+         (Prim op (list e1 e2))
+         (rco_atom exp))]
+    [(If cnd thn els)  ;; We need to check, why the book mentions not to replace the condition with a variable
+     (If (rco_exp cnd) (rco_exp thn) (rco_exp els))]
     [(Let x e body)
      (Let x (rco_exp e) (rco_exp body))]
-    [_ (error "Error: Unidentified case")]))
+    [_ (error "Error: Unidentified case in rco_exp")]))
          
 (define (test_rco p)
   (assert "testing rco"
@@ -642,7 +647,7 @@
      ;;("optimized-par-eval" ,opt-par-lvar ,interp-Lvar)
      ("shrink" ,shrink ,interp-Lif)
      ("uniquify" ,uniquify ,interp-Lif)
-     ;;("remove complex opera*" ,remove-complex-opera* ,interp-Lvar)
+     ("remove complex opera*" ,remove-complex-opera* ,interp-Lif)
      ;;("explicate control" ,explicate-control ,interp-Cvar)
      ;;("instruction selection" ,select-instructions ,interp-x86-0)
      ;;("uncover live" ,uncover-live-pass ,interp-x86-0)
