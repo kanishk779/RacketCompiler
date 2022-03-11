@@ -6,6 +6,7 @@
 (require "interp-Lint.rkt")
 (require "interp-Lvar.rkt")
 (require "interp-Cvar.rkt")
+(require "interp-Cif.rkt")
 (require "utilities.rkt")
 (require "interp.rkt")
 (require "interp-Lif.rkt")
@@ -188,6 +189,55 @@
     [(Program info e) (Program info (rco_exp e))]
     [_ (error "Error: Unidentified case")]))
 
+;; The global alist for blocks
+(define basic-blocks (list))
+
+;; Create new-blocks
+(define (create-block tail)
+  (match tail
+    [(Goto label) tail]
+    [_
+     (let ([label (gensym 'block)])
+       (set! basic-blocks (cons (cons label tail) basic-blocks))
+       (Goto label))]
+    ))
+
+;; explicate-pred for handling the if statements
+(define (explicate-pred cnd thn-block els-block)
+  (match cnd
+    [(Var var)
+     (values
+      (IfStmt (Prim 'eq? (list (Var var) (Bool #t)))
+             thn-block
+             els-block)
+      (list))]
+    [(Bool b) (values (if b thn-block els-block) (list))]
+    [(Prim 'not (list x))
+     (values
+      (IfStmt (Prim 'eq? (list x (Bool #f)))
+             thn-block
+             els-block)
+      (list))]
+    [(Prim op es)   ;; Takes care of eq?, <, >, >=, <=
+     (values
+      (IfStmt (Prim op es)
+             thn-block
+             els-block)
+      (list))]
+    [(Let x rhs body)
+     (define-values (stmt var-list) (explicate-pred body thn-block els-block))
+     (explicate-assign rhs x stmt var-list)]
+    [(If cnd^ thn^ els^)
+     (define-values (thn-stmt thn-list) (explicate-pred thn^ thn-block els-block))
+     (define-values (els-stmt els-list) (explicate-pred els^ thn-block els-block))
+     (define thn^-block (create-block thn-stmt))
+     (define els^-block (create-block els-stmt))
+     (define-values (stmt var-list) (explicate-pred cnd^ thn^-block els^-block))
+     (values
+      stmt
+      (append thn-list els-list var-list))]
+    [_ (error "explicate-pred unhandled case for cnd" cnd)])) 
+
 ;; The input to this pass will be the L_var with all the complex operation removed
 ;; which means operands of each operation will be atoms, (i.e Var or Int)
 ;; This is used to generate the tail in the grammar on page 25
@@ -202,6 +252,22 @@
     [(Prim op es)
      (values
       (Return (Prim op es)) (list))]
+    [(If cnd thn els)
+     (define-values (thn^ var-thn) (explicate-tail thn))
+     (define-values (els^ var-els) (explicate-tail els))
+     (define thn-block (create-block thn^))
+     (define els-block (create-block els^))
+     (match cnd
+       [(Bool b)
+        (values
+         (if b thn-block els-block)
+         (if b var-thn var-els))]
+       [_
+        (define-values (stmt var-lst) (explicate-pred cnd thn-block els-block))
+        (values
+         stmt
+         (append var-thn var-els var-lst))]
+       )]
     [(Let x rhs body)
      (define-values (tail-exp var-list) (explicate-tail body))
      (explicate-assign rhs x tail-exp var-list)]
@@ -215,6 +281,11 @@
       (Seq
        (Assign (Var x) (Var var)) cont)
       (cons x var-list))]
+    [(Bool b)
+     (values
+      (Seq
+       (Assign (Var x) (Bool b)) cont)
+      (cons x var-list))]
     [(Int n)
      (values
       (Seq
@@ -225,27 +296,48 @@
       (Seq
        (Assign (Var x) (Prim op es)) cont)
       (cons x var-list))]
+    [(If cnd thn els)
+     (define new-block (create-block cont))
+     (define-values (thn^ var-thn) (explicate-assign thn x new-block var-list))
+     (define-values (els^ var-els) (explicate-assign els x new-block var-list))
+     (define thn-block (create-block thn^))
+     (define els-block (create-block els^))
+     (match cnd   ;; handle the variable lists, if the then or else block is not being used, some variable will not be needed
+       [(Bool b)
+        (values
+         (if b thn-block els-block)
+         (if b (append var-thn var-list) (append var-list var-els)))]
+       [_
+        (define-values (stmt var-lst) (explicate-pred cnd thn-block els-block))
+        (values
+         stmt
+         (append var-thn var-els var-list var-list))])]   
     [(Let y rhs body)
      (define-values (tail-exp new-var-list) (explicate-assign body x cont var-list))
      (explicate-assign rhs y tail-exp new-var-list)]
     [_ (error "explicate-assign unhandled case" exp)]))
 
 
-;; explicate-control : R1 -> C0
+;; explicate-control : Lif -> Cif , (We are generating some blocks which are not visited by any other blocks)
 (define (explicate-control p)
   (match p
     [(Program info e)
+     (set! basic-blocks (list))  ;; Need to clear the blocks of previous programs (since it is a global variable)
      (define-values (tail-exp var-list) (explicate-tail e))
-     (define exp-dict (dict-set '() 'start tail-exp))
-     (define info-dict (dict-set '() 'locals var-list))
+     (define exp-dict (dict-set basic-blocks 'start tail-exp))
+     (define info-dict (dict-set '() 'locals (set->list (list->set var-list))))
      (CProgram info-dict exp-dict)]
     [_ (error "Error: Unidentified case")]))
 
-;; Convert (Int n) --> (Imm n) so as to follow the X86 grammar
+;; Convert (Int n) --> (Imm n) and #t -> 1, #f -> 0, so as to follow the X86 grammar
 (define (int->imm exp)
   (match exp
     [(Int n) (Imm n)]
-    [_ exp]))
+    [(Var x) (Var x)]
+    [(Bool b)
+     (match b
+       [#t (Imm 1)]
+       [#f (Imm 0)])]))
 
 ;; select for expression (which are assignment statements, as it is the output of explicate control)
 (define (select-exp exp var)
@@ -268,7 +360,7 @@
      (list
       (Instr 'movq (list (int->imm a1) var))
       (Instr 'addq (list (int->imm a2) var)))]
-    [_ (error "Error: Unidentified Case")]))
+    [_ (error "Error: Unidentified Case in select-exp")]))
 
 ;; select for statement, this function handles the special case when one of
 ;; the rhs of assignment is same as lhs variable.
@@ -648,7 +740,7 @@
      ("shrink" ,shrink ,interp-Lif)
      ("uniquify" ,uniquify ,interp-Lif)
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lif)
-     ;;("explicate control" ,explicate-control ,interp-Cvar)
+     ("explicate control" ,explicate-control ,interp-Cif)
      ;;("instruction selection" ,select-instructions ,interp-x86-0)
      ;;("uncover live" ,uncover-live-pass ,interp-x86-0)
      ;;("build graph" ,build-graph ,interp-x86-0)
