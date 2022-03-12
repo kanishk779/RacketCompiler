@@ -327,10 +327,10 @@
      (define exp-dict (dict-set basic-blocks 'start tail-exp))
      (define info-dict (dict-set '() 'locals (set->list (list->set var-list))))
      (CProgram info-dict exp-dict)]
-    [_ (error "Error: Unidentified case")]))
+    [_ (error "Error: Unidentified case in explicate-control")]))
 
 ;; Convert (Int n) --> (Imm n) and #t -> 1, #f -> 0, so as to follow the X86 grammar
-(define (int->imm exp)
+(define (C->X86 exp)
   (match exp
     [(Int n) (Imm n)]
     [(Var x) (Var x)]
@@ -339,12 +339,25 @@
        [#t (Imm 1)]
        [#f (Imm 0)])]))
 
+;; Return correct string for the operator
+(define (op->str op)
+  (match op
+    ['> 'g]
+    ['< 'l]
+    ['>= 'ge]
+    ['<= 'le]
+    ['eq? 'e]
+    [_ (error "Error: Unidentified case for op->str")]))
+
 ;; select for expression (which are assignment statements, as it is the output of explicate control)
 (define (select-exp exp var)
   (match exp
     [(Int int)
      (list
       (Instr 'movq (list (Imm int) var)))]
+    [(Bool b)
+     (list
+      (Instr 'movq (list (C->X86 (Bool b)) var)))]
     [(Var x)
      (list
       (Instr 'movq (list (Var x) var)))]
@@ -354,32 +367,60 @@
       (Instr 'movq (list (Reg 'rax) var)))]
     [(Prim '- (list a))
      (list
-      (Instr 'movq (list (int->imm a) var))
+      (Instr 'movq (list (C->X86 a) var))
       (Instr 'negq (list var)))]
     [(Prim '+ (list a1 a2))
      (list
-      (Instr 'movq (list (int->imm a1) var))
-      (Instr 'addq (list (int->imm a2) var)))]
+      (Instr 'movq (list (C->X86 a1) var))
+      (Instr 'addq (list (C->X86 a2) var)))]
+    [(Prim '- (list a1 a2))
+     (list
+      (Instr 'movq (list (C->X86 a1) var))
+      (Instr 'subq (list (C->X86 a2) var)))]
+    [(Prim 'not (list a1))
+     (list
+      (Instr 'movq (list (C->X86 a1) var))
+      (Instr 'xorq (list (Imm 1) var)))]
+    [(Prim op (list a1 a2)) #:when (or (eq? op '>) (eq? op '<) (eq? op '>=) (eq? op '<=) (eq? op 'eq?))
+     (list
+      (Instr 'cmpq (list (C->X86 a2) (C->X86 a1)))  ;; IMPORTANT -> the order of evaluation is backward for 'cmpq (Wasted a lot of time debugging this)
+      (Instr 'set (list (op->str op) (Reg 'al)))
+      (Instr 'movzbq (list (Reg 'al) var)))]
     [_ (error "Error: Unidentified Case in select-exp")]))
 
 ;; select for statement, this function handles the special case when one of
-;; the rhs of assignment is same as lhs variable.
+;; the rhs of assignment is same as lhs variable. (We missed one case here for unary subtraction (negation))
+;; Another mistake was that we did not return a list for special cases
 (define (select-statement exp)
   (match exp
-    [(Assign (Var var) (Prim '+ (list (Var y) a2)))
+    [(Assign (Var var) (Prim op (list (Var y) a2))) #:when (or (eq? op '+) (eq? op '-))  ;; Takes care of +, - (binary)
      (cond
        [(equal? var y)
-        (Instr 'addq (list (int->imm a2) (Var var)))]
+        (if (eq? op '+)
+            (list (Instr 'addq (list (C->X86 a2) (Var var))))
+            (list (Instr 'subq (list (C->X86 a2) (Var var)))))]
        [else
-        (select-exp (Prim '+ (list (Var y) a2)) (Var var))])]
-    [(Assign (Var var) (Prim '+ (list a1 (Var y))))
+        (select-exp (Prim op (list (Var y) a2)) (Var var))])]
+    [(Assign (Var var) (Prim op (list a1 (Var y)))) #:when (or (eq? op '+) (eq? op '-))  ;; Takes care of +, - (binary)
      (cond
        [(equal? var y)
-        (Instr 'addq (list (int->imm a1) (Var var)))]
+        (if (eq? op '+)
+            (list (Instr 'addq (list (C->X86 a1) (Var var))))
+            (list
+             (Instr 'negq (list (Var var)))
+             (Instr 'addq (list (C->X86 a1) (Var var)))))]
        [else
-        (select-exp (Prim '+ (list a1 (Var y))) (Var var))])]
+        (select-exp (Prim op (list a1 (Var y))) (Var var))])]
+    [(Assign (Var var) (Prim '- (list (Var y))))  ;; Takes care of - (unary)
+     (if (equal? var y)
+         (list (Instr 'negq (list (Var y))))
+         (select-exp (Prim '- (list (Var y))) (Var var)))]
+    [(Assign (Var var) (Prim 'not (list (Var y))))
+     (if (equal? var y)
+         (list (Instr 'xorq (list (Imm 1) var)))
+         (select-exp (Prim 'not (list (Var y))) (Var var)))]
     [(Assign (Var var) es) (select-exp es (Var var))]
-    [_ (error "Error: Unidentified Case")]))
+    [_ (error "Error: Unidentified Case in select-statement")]))
 
 ;; select for tail (Refer the grammar of C_var for tail)
 (define (select-tail exp)
@@ -388,6 +429,13 @@
      (append
       (select-statement stmt)
       (select-tail tail))]
+    [(Goto label)
+     (list (Jmp label))]
+    [(IfStmt (Prim op (list e1 e2)) (Goto label1) (Goto label2))
+     (list
+      (Instr 'cmpq (list (C->X86 e2) (C->X86 e1))) ;; IMPORTANT -> the order of evaluation is backward for 'cmpq
+      (JmpIf (op->str op) label1)
+      (Jmp label2))]
     [(Return (Prim 'read '()))
      (list
       (Callq 'read_int 0)
@@ -396,7 +444,7 @@
      (append
       (select-exp es (Reg 'rax))
       (list (Jmp 'conclusion)))]
-    [_ (error "Error: Unidentified Case")]))
+    [_ (error "Error: Unidentified Case in select-tail")]))
 
 ;; Give stack-size (It must be a multiple of 16)
 (define (give-st-size var-list)
@@ -405,16 +453,20 @@
       (* (+ len 1) 8)
       (* len 8)))
 
-;; select-instructions : C0 -> pseudo-x86
+;; generate blocks for each label in C_if
+(define (generate-blocks exp-dict)
+  (define listOfBlock (for/list ([pair exp-dict]) (Block '() (select-tail (cdr pair)))))
+  (define listOfLabel (for/list ([pair exp-dict]) (car pair)))
+  (define block-dict (list))
+  (for/list ([block listOfBlock] [label listOfLabel]) (cons label block)))
+
+;; select-instructions : C_if -> pseudo-x86
 (define (select-instructions p)
   (match p
-      [(CProgram info e)
-       (define instr (select-tail (cdr (car e))))
-       (define block (Block info instr))
-       (define exp (dict-set '() 'start block))
+    [(CProgram info exp-dict)
        (define new-info (dict-set info 'stack-size (give-st-size (cdr (car info)))))
-       (X86Program new-info exp)]
-    [_ (error "Error: Unidentified Case")]))
+       (X86Program new-info (generate-blocks exp-dict))]
+    [_ (error "Error: Unidentified Case in select-instructions")]))
 
 
 ;; change a variable into the Deref struct
@@ -741,7 +793,7 @@
      ("uniquify" ,uniquify ,interp-Lif)
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lif)
      ("explicate control" ,explicate-control ,interp-Cif)
-     ;;("instruction selection" ,select-instructions ,interp-x86-0)
+     ("instruction selection" ,select-instructions ,interp-x86-1)
      ;;("uncover live" ,uncover-live-pass ,interp-x86-0)
      ;;("build graph" ,build-graph ,interp-x86-0)
      ;;("assign homes" ,assign-homes ,interp-x86-0)
