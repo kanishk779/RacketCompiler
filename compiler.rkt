@@ -10,6 +10,7 @@
 (require "utilities.rkt")
 (require "interp.rkt")
 (require "interp-Lif.rkt")
+(require "priority_queue.rkt")
 (provide (all-defined-out))
 (AST-output-syntax 'concrete-syntax)
 
@@ -781,6 +782,111 @@
        [_ (error "Error: Unidentified Case while matching Block of X86Program in build-graph pass")])]
     [_ (error "Error: Unidentified Case while matching X86Program in build-graph pass")]))
 
+(define (make-visited nodes dict)
+    (match nodes
+    ['() dict]
+    [_ (make-visited (cdr nodes) (dict-set dict (car nodes) -1))]))
+
+(struct tup (name val))             
+            (define tup->                         
+            (lambda (tup1 tup2)                 
+                (> (tup-val tup1) (tup-val tup2))))
+
+(define (colour-node colour ncolours)
+    (if (member colour ncolours) 
+        (colour-node (+ 1 colour) ncolours)
+        colour))
+
+(define (update-saturation saturation neighbours q colour colours)
+    (match neighbours
+        ['() saturation]
+        [_ 
+            (define node (car neighbours))
+            (define node-sat (dict-ref saturation node))
+            (cond 
+                [(member colour node-sat) (update-saturation saturation (cdr neighbours) q colour)]
+                [else 
+                    (define new-sat (dict-set saturation node (append node-sat colour)))
+                    (pqueue-push! q (tup node (length (dict-ref new-sat node))))
+                    (update-saturation new-sat (cdr neighbours) q colour)])
+            ]))
+
+(define (dsatur q colours saturation graph)
+    (cond
+        [(eq? 0 (pqueue-count q)) colours]
+        [else 
+            (define node (pqueue-pop! q))
+            (cond   ;add rax condition
+                [(eq? (dict-ref colours (tup-name node)) -1) 
+                    (define neighbors (in-neighbors graph node))
+                    (define ncolours (map (lambda (x) (dict-ref colours x)) neighbors))
+                    (define new-colour (colour-node 0 ncolours))
+                    (define new-sat (update-saturation saturation neighbors q new-colour))
+                    (define new-colours (dict-set colours tup (tup-name node) new-colour))
+                    (dsatur q new-colours new-sat graph)]
+                [else (dsatur q colours saturation)])]))
+
+(define (add-stack-locations register-list num)
+    (cond
+        [(<= num 0) register-list]
+        [else (add-stack-locations (append register-list (Deref 'rbp (* -8 num))) (- num 1))]))
+        
+(define (generate-colourreg mapping num reg-list)
+    (match reg-list
+        ['() mapping]
+        [_ (generate-colourreg (append mapping (cons num (car reg-list))) (+ num 1) (cdr reg-list))]))
+
+
+(define (allocate-handle-arg arg mapping)
+  (match arg
+    [(Var x) (dict-ref mapping x)]
+    [_ arg]))
+
+;; Replaces the variables with stack location with respect to rbp (base-pointer)
+(define (allocate-single-instr instr mapping)
+  (match instr
+    [(Instr op (list a1 a2))  ;; Handles movq and addq
+     (Instr op (list (allocate-handle-arg a1 mapping) (allocate-handle-arg a2 mapping)))]
+    [(Instr 'popq (list a))   ;; Handles popq
+     instr]
+    [(Instr op (list a))      ;; Handles pushq and negq
+     (Instr op (list (allocate-handle-arg a mapping)))]
+    [_ instr]))               ;; Handles callq, Jmp, Retq
+
+(define (allocate-register-helper instr mapping)
+  (if (null? instr)
+      (list)
+      (cons (allocate-single-instr (car instr) mapping) (allocate-register-helper (cdr instr) mapping))))
+
+
+
+(define (allocate-registers p)
+    (match p
+        [(X86Program info exp)
+            (define block (dict-ref exp 'start))
+            (match block
+                [(Block block-info instr)
+
+                    (define graph (dict-ref info 'conflict))
+                    (define nodes (in-vertices graph))
+                    (define visited (make-visited nodes '()))
+
+                    (define q (make-pqueue tup->))
+                    (for ([i nodes])
+                        (pqueue-push! q (tup i 1)))
+                    (define colouring (dsatur q))
+                    (define register-list (list (Reg 'rbx) (Reg 'rcx) (Reg 'rdx) (Reg 'r8)))
+                    (define colour-list (remove-duplicates (dict-keys colouring)))
+                    (define new-reg-list (add-stack-locations register-list (- (length colour-list) (length register-list))))
+                    (define colourreg (generate-colourreg '() 0 new-reg-list))
+                    (define mapping (map (lambda (x) (cons x (dict-ref colourreg (dict-ref colouring x))))))
+
+                    (define new-block (Block block-info (allocate-register-helper instr mapping)))
+                    (define new-exp (dict-set '() 'start new-block))
+                    (X86Program info new-exp)]
+                [_ (error "Error: Unidentified Case while matching block")])]
+        [_ (error "Error: Unidentified Case while matching program after select instruction pass")]))
+
 ;; Define the compiler passes to be used by interp-tests and the grader
 ;; Note that your compiler file (the file that defines the passes)
 ;; must be named "compiler.rkt"
@@ -789,14 +895,15 @@
      ;; Uncomment the following passes as you finish them.
      ;;("partial-evaluator" ,partial-lvar ,interp-Lvar)
      ;;("optimized-par-eval" ,opt-par-lvar ,interp-Lvar)
-     ("shrink" ,shrink ,interp-Lif)
-     ("uniquify" ,uniquify ,interp-Lif)
-     ("remove complex opera*" ,remove-complex-opera* ,interp-Lif)
-     ("explicate control" ,explicate-control ,interp-Cif)
-     ("instruction selection" ,select-instructions ,interp-x86-1)
-     ;;("uncover live" ,uncover-live-pass ,interp-x86-0)
-     ;;("build graph" ,build-graph ,interp-x86-0)
-     ;;("assign homes" ,assign-homes ,interp-x86-0)
+    ;  ("shrink" ,shrink ,interp-Lvar)
+     ("uniquify" ,uniquify ,interp-Lvar)
+     ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar)
+     ("explicate control" ,explicate-control ,interp-Lvar)
+     ("instruction selection" ,select-instructions ,interp-x86-0)
+     ("uncover live" ,uncover-live-pass ,interp-x86-0)
+     ("build graph" ,build-graph ,interp-x86-0)
+    ;  ("assign homes" ,assign-homes ,interp-x86-0)
+     ("allocate-registers" ,allocate-registers ,interp-x86-0)
      ;;("patch instructions" ,patch-instructions ,interp-x86-0)
      ;;("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
      ))
