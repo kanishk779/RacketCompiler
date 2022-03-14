@@ -863,24 +863,26 @@
 (define (allocate-registers p)
     (match p
         [(X86Program info exp)
+            
             (define block (dict-ref exp 'start))
             (match block
                 [(Block block-info instr)
-
                     (define graph (dict-ref info 'conflict))
-                    (define nodes (in-vertices graph))
+                    (define nodes (sequence->list (in-vertices graph)))
+                    (display nodes)
                     (define visited (make-visited nodes '()))
-
                     (define q (make-pqueue tup->))
                     (for ([i nodes])
                         (pqueue-push! q (tup i 1)))
-                    (define colouring (dsatur q))
+                    (define saturation (map (lambda (x) (cons x (list))) nodes))
+                    (define colouring (dsatur q '() saturation graph))
                     (define register-list (list (Reg 'rbx) (Reg 'rcx) (Reg 'rdx) (Reg 'r8)))
                     (define colour-list (remove-duplicates (dict-keys colouring)))
                     (define new-reg-list (add-stack-locations register-list (- (length colour-list) (length register-list))))
                     (define colourreg (generate-colourreg '() 0 new-reg-list))
+                    (display "lol")
                     (define mapping (map (lambda (x) (cons x (dict-ref colourreg (dict-ref colouring x))))))
-
+                    (display "lel")
                     (define new-block (Block block-info (allocate-register-helper instr mapping)))
                     (define new-exp (dict-set '() 'start new-block))
                     (X86Program info new-exp)]
@@ -898,7 +900,7 @@
     ;  ("shrink" ,shrink ,interp-Lvar)
      ("uniquify" ,uniquify ,interp-Lvar)
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar)
-     ("explicate control" ,explicate-control ,interp-Lvar)
+     ("explicate control" ,explicate-control ,interp-Cvar)
      ("instruction selection" ,select-instructions ,interp-x86-0)
      ("uncover live" ,uncover-live-pass ,interp-x86-0)
      ("build graph" ,build-graph ,interp-x86-0)
