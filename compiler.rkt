@@ -519,6 +519,8 @@
 ;; Handles transformation of single instruction
 (define (patch-one-instr instr)
   (match instr
+    [(Instr op (list (Deref 'rbp int1) (Deref 'rbp int1)))
+        (list)]
     [(Instr op (list (Deref 'rbp int1) (Deref 'rbp int2)))
      (list
       (Instr 'movq (list (Deref 'rbp int1) (Reg 'rax)))
@@ -896,7 +898,10 @@
                     (define new-exp (dict-set '() 'start new-block))
                     (X86Program info new-exp)]
                 [_ (error "Error: Unidentified Case while matching block")])]
-        [_ (error "Error: Unidentified Case while matching program after select instruction pass")]))
+        [_ (error "Error: Unidentified Case while matching program in allocate registers pass")]))
+
+
+
 
 ;; Define the compiler passes to be used by interp-tests and the grader
 ;; Note that your compiler file (the file that defines the passes)
@@ -915,7 +920,7 @@
      ("build graph" ,build-graph ,interp-x86-0)
     ;  ("assign homes" ,assign-homes ,interp-x86-0)
      ("allocate-registers" ,allocate-registers ,interp-x86-0)
-     ;;("patch instructions" ,patch-instructions ,interp-x86-0)
+     ("patch instructions" ,patch-instructions ,interp-x86-0)
      ;;("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
      ))
 
