@@ -797,7 +797,7 @@
         (colour-node (+ 1 colour) ncolours)
         colour))
 
-(define (update-saturation saturation neighbours q colour colours)
+(define (update-saturation saturation neighbours q colour)
     (match neighbours
         ['() saturation]
         [_ 
@@ -806,7 +806,8 @@
             (cond 
                 [(member colour node-sat) (update-saturation saturation (cdr neighbours) q colour)]
                 [else 
-                    (define new-sat (dict-set saturation node (append node-sat colour)))
+                    (define new-sat (dict-set saturation node (append node-sat (list colour))))
+                    ; (display new-sat)
                     (pqueue-push! q (tup node (length (dict-ref new-sat node))))
                     (update-saturation new-sat (cdr neighbours) q colour)])
             ]))
@@ -818,28 +819,30 @@
             (define node (pqueue-pop! q))
             (cond   ;add rax condition
                 [(eq? (dict-ref colours (tup-name node)) -1) 
-                    (define neighbors (in-neighbors graph node))
+                    (define neighbors (sequence->list (in-neighbors graph (tup-name node))))
                     (define ncolours (map (lambda (x) (dict-ref colours x)) neighbors))
                     (define new-colour (colour-node 0 ncolours))
                     (define new-sat (update-saturation saturation neighbors q new-colour))
-                    (define new-colours (dict-set colours tup (tup-name node) new-colour))
+                    (define new-colours (dict-set colours (tup-name node) new-colour))
                     (dsatur q new-colours new-sat graph)]
-                [else (dsatur q colours saturation)])]))
+                [else (dsatur q colours saturation graph)])]))
 
 (define (add-stack-locations register-list num)
+    ; (display register-list)
+    ; (display "\n")
     (cond
         [(<= num 0) register-list]
-        [else (add-stack-locations (append register-list (Deref 'rbp (* -8 num))) (- num 1))]))
+        [else (add-stack-locations (append register-list (list (Deref 'rbp (* -8 num)))) (- num 1))]))
         
 (define (generate-colourreg mapping num reg-list)
     (match reg-list
         ['() mapping]
-        [_ (generate-colourreg (append mapping (cons num (car reg-list))) (+ num 1) (cdr reg-list))]))
+        [_ (generate-colourreg (append mapping (list (cons num (car reg-list)))) (+ num 1) (cdr reg-list))]))
 
 
 (define (allocate-handle-arg arg mapping)
   (match arg
-    [(Var x) (dict-ref mapping x)]
+    [(Var x) (dict-ref mapping (Var x))]
     [_ arg]))
 
 ;; Replaces the variables with stack location with respect to rbp (base-pointer)
@@ -875,14 +878,20 @@
                     (for ([i nodes])
                         (pqueue-push! q (tup i 1)))
                     (define saturation (map (lambda (x) (cons x (list))) nodes))
-                    (define colouring (dsatur q '() saturation graph))
-                    (define register-list (list (Reg 'rbx) (Reg 'rcx) (Reg 'rdx) (Reg 'r8)))
+                    (define colours (map (lambda (x) (cons x -1)) nodes))
+                    ; (define nsat (dict-set saturation "%r11" 6))
+                    ; (display (dict-ref saturation (car nodes)))
+                    ; (display nsat)
+                    (define colouring (dsatur q colours saturation graph))
+                    (display "lol\n")
+                    (define register-list (list (Reg 'rbx) (Reg 'r12) (Reg 'r13) (Reg 'r14) (Reg 'r15)))
                     (define colour-list (remove-duplicates (dict-keys colouring)))
                     (define new-reg-list (add-stack-locations register-list (- (length colour-list) (length register-list))))
                     (define colourreg (generate-colourreg '() 0 new-reg-list))
-                    (display "lol")
-                    (define mapping (map (lambda (x) (cons x (dict-ref colourreg (dict-ref colouring x))))))
-                    (display "lel")
+                    
+                    (define mapping (map (lambda (x) (cons x (dict-ref colourreg (dict-ref colouring x)))) nodes))
+                    (display mapping)
+                    (display "\n")
                     (define new-block (Block block-info (allocate-register-helper instr mapping)))
                     (define new-exp (dict-set '() 'start new-block))
                     (X86Program info new-exp)]

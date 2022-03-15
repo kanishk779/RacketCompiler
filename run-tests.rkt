@@ -27,8 +27,8 @@
         all-tests)))
 
 ;; Replace the #f with the type-checker
-; (interp-tests "var" type-check-Lif compiler-passes interp-Lif "var_test" (tests-for "var"))
-(interp-tests "aman" type-check-Lif compiler-passes interp-Lif "aman_test" (tests-for "aman"))
+(interp-tests "var" type-check-Lif compiler-passes interp-Lif "var_test" (tests-for "var"))
+; (interp-tests "aman" type-check-Lif compiler-passes interp-Lif "aman_test" (tests-for "aman"))
 
 
 
