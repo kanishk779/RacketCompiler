@@ -447,12 +447,16 @@
       (list (Jmp 'conclusion)))]
     [_ (error "Error: Unidentified Case in select-tail")]))
 
-;; Give stack-size (It must be a multiple of 16)
-(define (give-st-size var-list)
-  (define len (length var-list))
+;; Align the frame to be a multiple of 16
+(define (align-16 len)
   (if (odd? len)
       (* (+ len 1) 8)
       (* len 8)))
+
+;; Give stack-size (It must be a multiple of 16)
+(define (give-st-size var-list)
+  (define len (length var-list))
+  (align-16 len))
 
 ;; generate blocks for each label in C_if
 (define (generate-blocks exp-dict)
@@ -823,27 +827,31 @@
         ['() mapping]
         [_ (generate-colourreg (append mapping (list (cons num (car reg-list)))) (+ num 1) (cdr reg-list))]))
 
-
-(define (allocate-handle-arg arg mapping)
+;; Replace a single variable with stack-location or register
+(define (allocate-handle-arg arg mapping offset)
   (match arg
-    [(Var x) (dict-ref mapping (Var x))]
+    [(Var x)
+     (match (dict-ref mapping (Var x))
+       [(Reg r) (Reg r)]
+       [(Deref 'rbp num) (Deref 'rbp (- num offset))])]
     [_ arg]))
 
 ;; Replaces the variables with stack location with respect to rbp (base-pointer)
-(define (allocate-single-instr instr mapping)
+(define (allocate-single-instr instr mapping offset)
   (match instr
     [(Instr op (list a1 a2))  ;; Handles movq and addq
-     (Instr op (list (allocate-handle-arg a1 mapping) (allocate-handle-arg a2 mapping)))]
+     (Instr op (list (allocate-handle-arg a1 mapping offset) (allocate-handle-arg a2 mapping offset)))]
     [(Instr 'popq (list a))   ;; Handles popq
      instr]
     [(Instr op (list a))      ;; Handles pushq and negq
-     (Instr op (list (allocate-handle-arg a mapping)))]
+     (Instr op (list (allocate-handle-arg a mapping offset)))]
     [_ instr]))               ;; Handles callq, Jmp, Retq
 
-(define (allocate-register-helper instr mapping)
+;; Replaces each variable with the register or stack location
+(define (allocate-register-helper instr mapping offset)
   (if (null? instr)
       (list)
-      (cons (allocate-single-instr (car instr) mapping) (allocate-register-helper (cdr instr) mapping))))
+      (cons (allocate-single-instr (car instr) mapping offset) (allocate-register-helper (cdr instr) mapping offset))))
 
 ;; create a mapping for every variable in our program to a Stack-location or a Register
 (define (allocate-create-mapping nodes colouring colorReg)
@@ -853,12 +861,16 @@
         [(Reg r) (allocate-create-mapping (cdr nodes) colouring colorReg)]
         [_ (cons (cons (car nodes) (dict-ref colorReg (dict-ref colouring (car nodes)))) (allocate-create-mapping (cdr nodes) colouring colorReg))])))
 
+;; finds all the callee-saved register being used in the program
 (define (used-callee allocation)
   (match allocation
     ['() (list)]
     [_
      (match (car allocation)
-       [(Reg r) (cons (Reg r) (used-callee (cdr allocation)))]
+       [(Reg r)
+        (if (member (Reg r) callee-saved)
+            (cons (Reg r) (used-callee (cdr allocation)))
+            (used-callee (cdr allocation)))]
        [_ (used-callee (cdr allocation))])]))
   
 (define (allocate-registers p)
@@ -884,46 +896,59 @@
                     (define colours (make-colors nodes '()))
                     
                     (define colouring (dsatur q colours saturation graph))
-                    (define register-list (list (Reg 'rbx) (Reg 'r12) (Reg 'r13) (Reg 'r14)))
+                    (define register-list (list (Reg 'rbx) (Reg 'r12) (Reg 'r13) (Reg 'rcx)))
                     (define color-list (remove-duplicates (dict-values colouring)))
                     (printf "Printing the color-list :- \n")
                     (printf "~a\n" color-list)
-                    (define new-reg-list (add-stack-locations register-list (- (- (length color-list) 1) (length register-list))))
+                    (define spilled-vars (let ([x (- (- (length color-list) 1) (length register-list))]) (if (> 0 x) 0 x))) 
+                    (define new-reg-list (add-stack-locations register-list spilled-vars))
                     (define colourreg (generate-colourreg '() 0 new-reg-list))
                     
                     (define mapping (allocate-create-mapping nodes colouring colourreg))
                     (printf "Printing the mapping :- \n")
                     (printf "~a\n" mapping)
-                    (define new-block (Block block-info (allocate-register-helper instr mapping)))
+                    (define callee-reg (remove-duplicates (used-callee (dict-values mapping))))
+                    (define n-info (dict-set info 'used_callee callee-reg))
+                    (define new-info (dict-set n-info 'spilled-vars spilled-vars))
+                    (define new-block (Block block-info (allocate-register-helper instr mapping (* 8 (length callee-reg)))))
                     (define new-exp (dict-set '() 'start new-block))
-                    (define new-info (dict-set info 'used_callee (remove-duplicates (used-callee (dict-values mapping)))))
                     (X86Program new-info new-exp)]
                 [_ (error "Error: Unidentified Case while matching block")])]
         [_ (error "Error: Unidentified Case while matching program in allocate registers pass")]))
 
 
 ;; generates the Conclusion
-(define (conclusion-gen stack-size)
-  (list
-  (Instr 'addq (list (Imm stack-size) (Reg 'rsp)))
-  (Instr 'popq (list (Reg 'rbp)))
-  (Retq)))
+(define (conclusion-gen stack-size used-callee)
+  (append
+   (list
+    (Instr 'addq (list (Imm stack-size) (Reg 'rsp))))
+   (for/list ([reg (reverse used-callee)]) (Instr 'popq (list reg)))  ;; POP in the reverse direction, the register which was pushed last should be popped first
+   (list
+    (Instr 'popq (list (Reg 'rbp)))
+    (Retq)))
+  )
 
 ;; generates Main block
-(define (main-gen stack-size)
-  (list 
-  (Instr 'pushq (list (Reg 'rbp))) 
-  (Instr 'movq (list (Reg 'rsp) (Reg 'rbp)))
-  (Instr 'subq (list (Imm stack-size) (Reg 'rsp)))
-  (Jmp 'start)))
+(define (main-gen stack-size used-callee)
+  (append
+   (list
+    (Instr 'pushq (list (Reg 'rbp)))
+    (Instr 'movq (list (Reg 'rsp) (Reg 'rbp))))
+   (for/list ([reg used-callee]) (Instr 'pushq (list reg)))
+   (list
+    (Instr 'subq (list (Imm stack-size) (Reg 'rsp)))
+    (Jmp 'start))))
+
 
 ;; prelude-and-conclusion : x86 -> x86
 (define (prelude-and-conclusion p)
   (match p
     [(X86Program info exp) 
-    (define stack-size (dict-ref info 'stack-size))
-    (define main-block (Block '() (main-gen stack-size)))
-    (define conclusion-block (Block '() (conclusion-gen stack-size)))
+    (define spilled (dict-ref info 'spilled-vars))
+    (define used-callee (dict-ref info 'used_callee))
+    (define st-size (- (align-16 (+ spilled (length used-callee))) (* 8 (length used-callee)))) ;; Refer the formula on Page 50
+    (define main-block (Block '() (main-gen st-size used-callee)))
+    (define conclusion-block (Block '() (conclusion-gen st-size used-callee)))
     (define new-exp (dict-set exp 'main main-block))
     (define final-exp (dict-set new-exp 'conclusion conclusion-block))
     (X86Program info final-exp)]
@@ -947,6 +972,6 @@
     ;  ("assign homes" ,assign-homes ,interp-x86-0)
      ("allocate-registers" ,allocate-registers ,interp-x86-0)
      ("patch instructions" ,patch-instructions ,interp-x86-0)
-     ;;("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
+     ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
      ))
 
