@@ -28,10 +28,10 @@
 
 ;; Replace the #f with the type-checker
 (interp-tests "var" type-check-Lif compiler-passes interp-Lif "var_test" (tests-for "var"))
+; (interp-tests "aman" type-check-Lif compiler-passes interp-Lif "aman_test" (tests-for "aman"))
 
 
 
-;; Uncomment the following when all the passes are complete to
-;; test the final x86 code.
-;;(compiler-tests "var" #f compiler-passes "var_test" (tests-for "var"))
+;; Uncomment the following when all the passes are complete to test the final x86 code.
+(compiler-tests "var" type-check-Lif compiler-passes "var_test" (tests-for "var"))
 

@@ -10,6 +10,7 @@
 (require "utilities.rkt")
 (require "interp.rkt")
 (require "interp-Lif.rkt")
+(require "priority_queue.rkt")
 (provide (all-defined-out))
 (AST-output-syntax 'concrete-syntax)
 
@@ -446,12 +447,16 @@
       (list (Jmp 'conclusion)))]
     [_ (error "Error: Unidentified Case in select-tail")]))
 
-;; Give stack-size (It must be a multiple of 16)
-(define (give-st-size var-list)
-  (define len (length var-list))
+;; Align the frame to be a multiple of 16
+(define (align-16 len)
   (if (odd? len)
       (* (+ len 1) 8)
       (* len 8)))
+
+;; Give stack-size (It must be a multiple of 16)
+(define (give-st-size var-list)
+  (define len (length var-list))
+  (align-16 len))
 
 ;; generate blocks for each label in C_if
 (define (generate-blocks exp-dict)
@@ -518,10 +523,16 @@
 ;; Handles transformation of single instruction
 (define (patch-one-instr instr)
   (match instr
+    [(Instr op (list (Reg r1) (Reg r2)))
+     (cond
+       [(equal? r1 r2) (list)]
+       [else (list instr)])]
     [(Instr op (list (Deref 'rbp int1) (Deref 'rbp int2)))
-     (list
-      (Instr 'movq (list (Deref 'rbp int1) (Reg 'rax)))
-      (Instr op (list (Reg 'rax) (Deref 'rbp int2))))]
+     (cond
+       [(equal? int1 int2) (list)]
+       [else (list
+              (Instr 'movq (list (Deref 'rbp int1) (Reg 'rax)))
+              (Instr op (list (Reg 'rax) (Deref 'rbp int2))))])]
     [_ (list instr)]))
 
 ;; changes movq and addq with two stack locations as the arguments, since in X86 only 1 memory reference
@@ -544,33 +555,6 @@
        [_ (error "Error: Unidentified Case")])]
     [_ (error "Error: Unidentified Case")]))
 
-
-;; generates the Conclusion
-(define (conclusion-gen stack-size)
-  (list
-  (Instr 'addq (list (Imm stack-size) (Reg 'rsp)))
-  (Instr 'popq (list (Reg 'rbp)))
-  (Retq)))
-
-;; generates Main block
-(define (main-gen stack-size)
-  (list 
-  (Instr 'pushq (list (Reg 'rbp))) 
-  (Instr 'movq (list (Reg 'rsp) (Reg 'rbp)))
-  (Instr 'subq (list (Imm stack-size) (Reg 'rsp)))
-  (Jmp 'start)))
-
-;; prelude-and-conclusion : x86 -> x86
-(define (prelude-and-conclusion p)
-  (match p
-    [(X86Program info exp) 
-    (define stack-size (dict-ref info 'stack-size))
-    (define main-block (Block '() (main-gen stack-size)))
-    (define conclusion-block (Block '() (conclusion-gen stack-size)))
-    (define new-exp (dict-set exp 'main main-block))
-    (define final-exp (dict-set new-exp 'conclusion conclusion-block))
-    (X86Program info final-exp)]
-    [_ (error "Error: Unidentified Case")]))
 
 ;; checks if an expression is Integer
 (define (int? exp)
@@ -781,6 +765,195 @@
        [_ (error "Error: Unidentified Case while matching Block of X86Program in build-graph pass")])]
     [_ (error "Error: Unidentified Case while matching X86Program in build-graph pass")]))
 
+;; Creates a dictionary where every node is mapped to -1 (which indicates not visited)
+(define (make-colors nodes dict)
+    (match nodes
+      ['() dict]
+      [_
+       (match (car nodes)  ;; Checks if the first character is % (indicating that it is a register)
+         [(Reg r) (make-colors (cdr nodes) (dict-set dict (car nodes) -2))]
+         [_ (make-colors (cdr nodes) (dict-set dict (car nodes) -1))])]))
+
+;; Structure describing our node
+(struct tup (name val))             
+            (define tup->                         
+            (lambda (tup1 tup2)                 
+                (> (tup-val tup1) (tup-val tup2))))
+
+;; find the smallest color which none of the neighbors has
+(define (colour-node colour ncolours)
+    (if (member colour ncolours) 
+        (colour-node (+ 1 colour) ncolours)
+        colour))
+
+;; Update the saturation list of all the neighbors
+(define (update-saturation saturation neighbours q colour)
+    (match neighbours
+        ['() saturation]
+        [_ 
+            (define node (car neighbours))
+            (define node-sat (dict-ref saturation node))
+            (cond 
+                [(member colour node-sat) (update-saturation saturation (cdr neighbours) q colour)]
+                [else 
+                    (define new-sat (dict-set saturation node (append node-sat (list colour))))
+                    (pqueue-push! q (tup node (length (dict-ref new-sat node))))
+                    (update-saturation new-sat (cdr neighbours) q colour)])
+            ]))
+
+;; Greedy DSATUR algorithm
+(define (dsatur q colours saturation graph)
+    (cond
+        [(eq? 0 (pqueue-count q)) colours]
+        [else 
+            (define node (pqueue-pop! q))
+            (cond   ;add rax condition
+                [(eq? (dict-ref colours (tup-name node)) -1) 
+                    (define neighbors (sequence->list (in-neighbors graph (tup-name node)))) ;; get neighbours
+                    (define ncolours (map (lambda (x) (dict-ref colours x)) neighbors))  ;; get neighbor colors
+                    (define new-colour (colour-node 0 ncolours))  ;; get the color for current node
+                    (define new-sat (update-saturation saturation neighbors q new-colour))
+                    (define new-colours (dict-set colours (tup-name node) new-colour))
+                    (dsatur q new-colours new-sat graph)]
+                [else (dsatur q colours saturation graph)])]))
+
+(define (add-stack-locations register-list num)
+    (cond
+        [(<= num 0) register-list]
+        [else (add-stack-locations (append register-list (list (Deref 'rbp (* -8 num)))) (- num 1))]))
+        
+(define (generate-colourreg mapping num reg-list)
+    (match reg-list
+        ['() mapping]
+        [_ (generate-colourreg (append mapping (list (cons num (car reg-list)))) (+ num 1) (cdr reg-list))]))
+
+;; Replace a single variable with stack-location or register
+(define (allocate-handle-arg arg mapping offset)
+  (match arg
+    [(Var x)
+     (match (dict-ref mapping (Var x))
+       [(Reg r) (Reg r)]
+       [(Deref 'rbp num) (Deref 'rbp (- num offset))])]
+    [_ arg]))
+
+;; Replaces the variables with stack location with respect to rbp (base-pointer)
+(define (allocate-single-instr instr mapping offset)
+  (match instr
+    [(Instr op (list a1 a2))  ;; Handles movq and addq
+     (Instr op (list (allocate-handle-arg a1 mapping offset) (allocate-handle-arg a2 mapping offset)))]
+    [(Instr 'popq (list a))   ;; Handles popq
+     instr]
+    [(Instr op (list a))      ;; Handles pushq and negq
+     (Instr op (list (allocate-handle-arg a mapping offset)))]
+    [_ instr]))               ;; Handles callq, Jmp, Retq
+
+;; Replaces each variable with the register or stack location
+(define (allocate-register-helper instr mapping offset)
+  (if (null? instr)
+      (list)
+      (cons (allocate-single-instr (car instr) mapping offset) (allocate-register-helper (cdr instr) mapping offset))))
+
+;; create a mapping for every variable in our program to a Stack-location or a Register
+(define (allocate-create-mapping nodes colouring colorReg)
+  (if (null? nodes)
+      (list)
+      (match (car nodes)
+        [(Reg r) (allocate-create-mapping (cdr nodes) colouring colorReg)]
+        [_ (cons (cons (car nodes) (dict-ref colorReg (dict-ref colouring (car nodes)))) (allocate-create-mapping (cdr nodes) colouring colorReg))])))
+
+;; finds all the callee-saved register being used in the program
+(define (used-callee allocation)
+  (match allocation
+    ['() (list)]
+    [_
+     (match (car allocation)
+       [(Reg r)
+        (if (member (Reg r) callee-saved)
+            (cons (Reg r) (used-callee (cdr allocation)))
+            (used-callee (cdr allocation)))]
+       [_ (used-callee (cdr allocation))])]))
+  
+(define (allocate-registers p)
+    (match p
+        [(X86Program info exp)
+            (define block (dict-ref exp 'start))
+            (match block
+                [(Block block-info instr)
+                    (define graph (dict-ref info 'conflict))
+                    (define nodes (sequence->list (in-vertices graph)))
+                    ; Print the nodes
+                    (printf "Printing the nodes :- \n")
+                    (printf "~a\n" nodes)
+                    ; create the priority queue by passing in the comparator
+                    (define q (make-pqueue tup->))
+                    
+                    (for ([i nodes])
+                      (pqueue-push! q (tup i (sequence-length (in-neighbors graph i)))))
+                    
+                    ; Mapping between nodes and it's saturation list
+                    (define saturation (map (lambda (x) (cons x (list))) nodes))
+                    ; Initially every Variable is assigned -1 as the color and -2 for the Registers
+                    (define colours (make-colors nodes '()))
+                    
+                    (define colouring (dsatur q colours saturation graph))
+                    (define register-list (list (Reg 'rbx) (Reg 'r12) (Reg 'r13) (Reg 'rcx)))
+                    (define color-list (remove-duplicates (dict-values colouring)))
+                    (printf "Printing the color-list :- \n")
+                    (printf "~a\n" color-list)
+                    (define spilled-vars (let ([x (- (- (length color-list) 1) (length register-list))]) (if (> 0 x) 0 x))) 
+                    (define new-reg-list (add-stack-locations register-list spilled-vars))
+                    (define colourreg (generate-colourreg '() 0 new-reg-list))
+                    
+                    (define mapping (allocate-create-mapping nodes colouring colourreg))
+                    (printf "Printing the mapping :- \n")
+                    (printf "~a\n" mapping)
+                    (define callee-reg (remove-duplicates (used-callee (dict-values mapping))))
+                    (define n-info (dict-set info 'used_callee callee-reg))
+                    (define new-info (dict-set n-info 'spilled-vars spilled-vars))
+                    (define new-block (Block block-info (allocate-register-helper instr mapping (* 8 (length callee-reg)))))
+                    (define new-exp (dict-set '() 'start new-block))
+                    (X86Program new-info new-exp)]
+                [_ (error "Error: Unidentified Case while matching block")])]
+        [_ (error "Error: Unidentified Case while matching program in allocate registers pass")]))
+
+
+;; generates the Conclusion
+(define (conclusion-gen stack-size used-callee)
+  (append
+   (list
+    (Instr 'addq (list (Imm stack-size) (Reg 'rsp))))
+   (for/list ([reg (reverse used-callee)]) (Instr 'popq (list reg)))  ;; POP in the reverse direction, the register which was pushed last should be popped first
+   (list
+    (Instr 'popq (list (Reg 'rbp)))
+    (Retq)))
+  )
+
+;; generates Main block
+(define (main-gen stack-size used-callee)
+  (append
+   (list
+    (Instr 'pushq (list (Reg 'rbp)))
+    (Instr 'movq (list (Reg 'rsp) (Reg 'rbp))))
+   (for/list ([reg used-callee]) (Instr 'pushq (list reg)))
+   (list
+    (Instr 'subq (list (Imm stack-size) (Reg 'rsp)))
+    (Jmp 'start))))
+
+
+;; prelude-and-conclusion : x86 -> x86
+(define (prelude-and-conclusion p)
+  (match p
+    [(X86Program info exp) 
+    (define spilled (dict-ref info 'spilled-vars))
+    (define used-callee (dict-ref info 'used_callee))
+    (define st-size (- (align-16 (+ spilled (length used-callee))) (* 8 (length used-callee)))) ;; Refer the formula on Page 50
+    (define main-block (Block '() (main-gen st-size used-callee)))
+    (define conclusion-block (Block '() (conclusion-gen st-size used-callee)))
+    (define new-exp (dict-set exp 'main main-block))
+    (define final-exp (dict-set new-exp 'conclusion conclusion-block))
+    (X86Program info final-exp)]
+    [_ (error "Error: Unidentified Case")]))
+
 ;; Define the compiler passes to be used by interp-tests and the grader
 ;; Note that your compiler file (the file that defines the passes)
 ;; must be named "compiler.rkt"
@@ -789,15 +962,16 @@
      ;; Uncomment the following passes as you finish them.
      ;;("partial-evaluator" ,partial-lvar ,interp-Lvar)
      ;;("optimized-par-eval" ,opt-par-lvar ,interp-Lvar)
-     ("shrink" ,shrink ,interp-Lif)
-     ("uniquify" ,uniquify ,interp-Lif)
-     ("remove complex opera*" ,remove-complex-opera* ,interp-Lif)
-     ("explicate control" ,explicate-control ,interp-Cif)
-     ("instruction selection" ,select-instructions ,interp-x86-1)
-     ;;("uncover live" ,uncover-live-pass ,interp-x86-0)
-     ;;("build graph" ,build-graph ,interp-x86-0)
-     ;;("assign homes" ,assign-homes ,interp-x86-0)
-     ;;("patch instructions" ,patch-instructions ,interp-x86-0)
-     ;;("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
+    ;  ("shrink" ,shrink ,interp-Lvar)
+     ("uniquify" ,uniquify ,interp-Lvar)
+     ("remove complex opera*" ,remove-complex-opera* ,interp-Lvar)
+     ("explicate control" ,explicate-control ,interp-Cvar)
+     ("instruction selection" ,select-instructions ,interp-x86-0)
+     ("uncover live" ,uncover-live-pass ,interp-x86-0)
+     ("build graph" ,build-graph ,interp-x86-0)
+    ;  ("assign homes" ,assign-homes ,interp-x86-0)
+     ("allocate-registers" ,allocate-registers ,interp-x86-0)
+     ("patch instructions" ,patch-instructions ,interp-x86-0)
+     ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
      ))
 
