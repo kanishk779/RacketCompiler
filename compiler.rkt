@@ -11,6 +11,7 @@
 (require "interp.rkt")
 (require "interp-Lif.rkt")
 (require "priority_queue.rkt")
+(require "multigraph.rkt")
 (provide (all-defined-out))
 (AST-output-syntax 'concrete-syntax)
 
@@ -327,9 +328,58 @@
      (define-values (tail-exp var-list) (explicate-tail e))
      (define exp-dict (dict-set basic-blocks 'start tail-exp))
      (define info-dict (dict-set '() 'locals (set->list (list->set var-list))))
-     (CProgram info-dict exp-dict)]
+     (define new-dict (dict-set info-dict 'cfg (make-graph exp-dict)))
+     (CProgram new-dict exp-dict)]
     [_ (error "Error: Unidentified case in explicate-control")]))
 
+;; Remove empty edges
+(define (remove-empty-edge edges)
+  (if (null? edges)
+      (list)
+      (match (car edges)
+        [(list a b) (cons (car edges) (remove-empty-edge (cdr edges)))]
+        [_ (remove-empty-edge (cdr edges))])))
+
+;; Remove redundant edges
+(define (remove-redundant-edges edges) (set->list (list->set edges)))
+
+(define (handle-tail tail)
+  (match tail
+    [(Seq stmt tail)
+      (handle-tail tail)]
+    [(Goto label) tail]
+    [(IfStmt cnd (Goto label1) (Goto label2)) tail]
+    [(Return es) tail]
+    [_ (error "Error: Unidentified Case in handle-tail")]))
+
+
+;; Handle each basic block
+(define (handle-pair pair)
+  (define block-label (car pair))
+  (define last-stmt (handle-tail (cdr pair)))
+  (match last-stmt
+    [(Return x) (list (list))]   ;; IMPORTANT -> there might not any edges in the graph, but there can be vertices
+    [(Goto next-label) (list (list block-label next-label))]
+    [(IfStmt cnd (Goto thn-label) (Goto els-label)) (list (list block-label thn-label) (list block-label els-label))]
+    [_ (error "Error: Unidentified case in handle-pair")]))
+
+;; Create the Control-Flow-Graph for basic blocks
+(define (create-graph blocks)
+  (if (null? blocks)
+      (list)
+      (append (handle-pair (car blocks)) (create-graph (cdr blocks)))))
+
+;; Make the graph using multi-graph for basic blocks
+(define (make-graph exp-dict)
+  (define edges (create-graph exp-dict))
+  (define correct-edges (remove-redundant-edges (remove-empty-edge edges)))
+  (define graph (make-multigraph correct-edges))
+  (if (null? correct-edges)
+      (add-vertex! graph 'start)
+      10)
+  graph)
+  
+  
 ;; Convert (Int n) --> (Imm n) and #t -> 1, #f -> 0, so as to follow the X86 grammar
 (define (C->X86 exp)
   (match exp
@@ -462,6 +512,8 @@
 (define (generate-blocks exp-dict)
   (define listOfBlock (for/list ([pair exp-dict]) (Block '() (select-tail (cdr pair)))))
   (define listOfLabel (for/list ([pair exp-dict]) (car pair)))
+  (printf "listOfLabel : ~a\n" listOfLabel)
+  (printf "listOfBlock : ~a\n" listOfBlock)
   (define block-dict (list))
   (for/list ([block listOfBlock] [label listOfLabel]) (cons label block)))
 
@@ -519,41 +571,6 @@
         (X86Program info new-exp)]
        [_ (error "Error: Unidentified Case while matching block")])]
     [_ (error "Error: Unidentified Case while matching program after select instruction pass")]))
-
-;; Handles transformation of single instruction
-(define (patch-one-instr instr)
-  (match instr
-    [(Instr op (list (Reg r1) (Reg r2)))
-     (cond
-       [(equal? r1 r2) (list)]
-       [else (list instr)])]
-    [(Instr op (list (Deref 'rbp int1) (Deref 'rbp int2)))
-     (cond
-       [(equal? int1 int2) (list)]
-       [else (list
-              (Instr 'movq (list (Deref 'rbp int1) (Reg 'rax)))
-              (Instr op (list (Reg 'rax) (Deref 'rbp int2))))])]
-    [_ (list instr)]))
-
-;; changes movq and addq with two stack locations as the arguments, since in X86 only 1 memory reference
-;; per instruction is allowed
-(define (patch-helper instr)
-  (if (null? instr)
-      (list)
-      (append (patch-one-instr (car instr)) (patch-helper (cdr instr)))))
-
-;; patch-instructions : psuedo-x86 -> x86
-(define (patch-instructions p)
-  (match p
-    [(X86Program info exp)
-     (define block (cdr (car exp)))
-     (match block
-       [(Block block-info instr)
-        (define new-block (Block block-info (patch-helper instr)))
-        (define new-exp (dict-set '() 'start new-block))
-        (X86Program info new-exp)]
-       [_ (error "Error: Unidentified Case")])]
-    [_ (error "Error: Unidentified Case")]))
 
 
 ;; checks if an expression is Integer
@@ -662,6 +679,18 @@
      (set)]
     [(Instr 'pushq (list a))
      (set a)]
+    [(Instr 'xorq (list a b))
+     (match a
+       [(Imm x) (set b)]
+       [_ (set b)])]
+    [(Instr 'cmpq (list a b))
+     (set a b)]
+    [(Instr 'set (list a b))
+     (set)]
+    [(Instr 'movzbq (list a b))
+     (set (Reg 'rax))] ;; NEED TO CONFIRM THIS ! (whether to use %al or %rax)
+    [(JmpIf cc label)
+     (set)]
     [(Callq label arity)
      (set)]  ;; for now we return an empty set, but if arity > 0, then we need to return the register used for parameter passing
     [(Jmp 'conclusion) (set (Reg 'rax) (Reg 'rsp))] ;; We can hard-core this because we know conclusion block reads from rax and rsp
@@ -686,11 +715,23 @@
      (set a)]
     [(Instr 'pushq (list a))
      (set)]
+    [(Instr 'xorq (list a b))
+     (set b)]
+    [(Instr 'cmpq (list a b))
+     (set)]
+    [(Instr 'set (list a b))    ;; Only the second argument will be written into
+     (set b)]
+    [(Instr 'movzbq (list a b))
+     (set b)]
+    [(JmpIf cc label)
+     (set)]
     [(Callq label arity)
      (list->set caller-saved)]  ;; All the caller-saved registers are in the write set as mentioned on Page 36.
     [(Retq) (set)]
     [_ (set)]))
   
+;; dictionary mapping labels to the live-before set of the blocks
+(define label->live (list))
 
 ;; Takes a X86 instruction and live-before set and gives the live after set
 (define (live-before-op instr live-before)
@@ -703,19 +744,47 @@
     [_
      (define new-set (live-before-op (car instrs) live-before-set))
      (cons new-set (live-before (cdr instrs) new-set))]))
+
+;; Process blocks -> returns a list of (label . block)
+(define (uncover-blocks tsort-order block-dict)
+  (match tsort-order
+    [(list) (list)]
+    [_
+     (define curr-label (car tsort-order))
+     (define block (dict-ref block-dict curr-label))
+     (match block
+       [(Block b-info instrs)
+        (define last-instr (last instrs))
+        (define second-last-instr (if (< 1 (length instrs)) (cadr (reverse instrs)) (Retq)))
+        (define live-before-set (match last-instr
+                      [(Retq) (set)]
+                      [_
+                       (define other-label (match last-instr [(Jmp lab) lab] [_ (error "The last instruction in X86 is incorrect")]))
+                       (define live-vars (dict-ref label->live other-label))
+                       (match second-last-instr
+                         [(JmpIf cc next-label) (set-union (dict-ref label->live next-label) live-vars)]
+                         [_ live-vars])]))
+                        
+        (define live-before-list (reverse (live-before (reverse instrs) live-before-set))) ;; give live-before-set as input
+        (set! label->live (cons (cons curr-label (car live-before-list)) label->live))
+        (define new-info (dict-set b-info 'live-before live-before-list))
+        (define new-block (Block new-info instrs))
+        (cons (cons curr-label new-block) (uncover-blocks (cdr tsort-order) block-dict))]
+       [_ (error "Unidentified case in uncover-blocks")])]))
      
 ;; Uncover-live pass
 (define (uncover-live-pass p)
   (match p
-    [(X86Program info exp)
-     (define block (dict-ref exp 'start))
-     (match block
-       [(Block b-info instrs)
-        (define live-before-list (live-before (reverse instrs) (set)))
-        (define new-info (dict-set b-info 'live-before (reverse live-before-list)))
-        (define new-block (Block new-info instrs))
-        (X86Program info (dict-set info 'start new-block))]
-       [_ (error "Error: Unidentified Case while matching Block of X86Program in uncover-live-pass")])]
+    [(X86Program info block-dict)
+     (set! label->live (list (cons 'conclusion (set (Reg 'rax) (Reg 'rsp)))))  ;; We add this because there is no entry for conclusion in our basic-blocks dict
+     (define cfg (dict-ref info 'cfg))
+     ;(printf (graphviz cfg))
+     (define t-cfg (transpose cfg))
+     (define tsort-order (tsort t-cfg))   ;; list of vertices
+     (define label-block-mapping (uncover-blocks tsort-order block-dict))
+     (printf "label-block-mapping : ~a\n" label-block-mapping)
+     (X86Program info label-block-mapping)]
+     
     [_ (error "Error: Unidentified Case while matching X86Program in uncover-live-pass")]))
 
 ;; Process single instruction, returns list of edges, where an edge is a list of two elements, source and vertex
@@ -738,16 +807,6 @@
       (generate-edges (car instrs) (car live-after))
       (build-graph-exp (cdr instrs) (cdr live-after)))]))
 
-;; Remove empty edges
-(define (remove-empty-edge edges)
-  (if (null? edges)
-      (list)
-      (match (car edges)
-        [(list a b) (cons (car edges) (remove-empty-edge (cdr edges)))]
-        [_ (remove-empty-edge (cdr edges))])))
-
-;; Remove redundant edges
-(define (remove-redundant-edges edges) (set->list (list->set edges)))
 
 ;; Build interference graph
 (define (build-graph p)
@@ -917,6 +976,42 @@
         [_ (error "Error: Unidentified Case while matching program in allocate registers pass")]))
 
 
+;; Handles transformation of single instruction
+(define (patch-one-instr instr)
+  (match instr
+    [(Instr op (list (Reg r1) (Reg r2)))
+     (cond
+       [(equal? r1 r2) (list)]
+       [else (list instr)])]
+    [(Instr op (list (Deref 'rbp int1) (Deref 'rbp int2)))
+     (cond
+       [(equal? int1 int2) (list)]
+       [else (list
+              (Instr 'movq (list (Deref 'rbp int1) (Reg 'rax)))
+              (Instr op (list (Reg 'rax) (Deref 'rbp int2))))])]
+    [_ (list instr)]))
+
+;; changes movq and addq with two stack locations as the arguments, since in X86 only 1 memory reference
+;; per instruction is allowed
+(define (patch-helper instr)
+  (if (null? instr)
+      (list)
+      (append (patch-one-instr (car instr)) (patch-helper (cdr instr)))))
+
+;; patch-instructions : psuedo-x86 -> x86
+(define (patch-instructions p)
+  (match p
+    [(X86Program info exp)
+     (define block (cdr (car exp)))
+     (match block
+       [(Block block-info instr)
+        (define new-block (Block block-info (patch-helper instr)))
+        (define new-exp (dict-set '() 'start new-block))
+        (X86Program info new-exp)]
+       [_ (error "Error: Unidentified Case")])]
+    [_ (error "Error: Unidentified Case")]))
+
+
 ;; generates the Conclusion
 (define (conclusion-gen stack-size used-callee)
   (append
@@ -967,7 +1062,7 @@
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lif)
      ("explicate control" ,explicate-control ,interp-Cif)
      ("instruction selection" ,select-instructions ,interp-x86-1)
-     ;("uncover live" ,uncover-live-pass ,interp-x86-1)
+     ("uncover live" ,uncover-live-pass ,interp-x86-1)
      ;("build graph" ,build-graph ,interp-x86-1)
     ;  ("assign homes" ,assign-homes ,interp-x86-0)
      ;("allocate-registers" ,allocate-registers ,interp-x86-0)
