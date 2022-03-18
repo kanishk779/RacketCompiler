@@ -26,12 +26,13 @@
           (string=? r (car (string-split p "_"))))
         all-tests)))
 
+;; NOTE -> we can replace "var" with "if" and vice-versa for testing different versions of the languages
+
 ;; Replace the #f with the type-checker
 (interp-tests "if" type-check-Lif compiler-passes interp-Lif "if_test" (tests-for "if"))
-; (interp-tests "aman" type-check-Lif compiler-passes interp-Lif "aman_test" (tests-for "aman"))
 
 
 
 ;; Uncomment the following when all the passes are complete to test the final x86 code.
-;;(compiler-tests "var" type-check-Lif compiler-passes "var_test" (tests-for "var"))
+(compiler-tests "if" type-check-Lif compiler-passes "if_test" (tests-for "if"))
 

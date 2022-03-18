@@ -512,8 +512,6 @@
 (define (generate-blocks exp-dict)
   (define listOfBlock (for/list ([pair exp-dict]) (Block '() (select-tail (cdr pair)))))
   (define listOfLabel (for/list ([pair exp-dict]) (car pair)))
-  (printf "listOfLabel : ~a\n" listOfLabel)
-  (printf "listOfBlock : ~a\n" listOfBlock)
   (define block-dict (list))
   (for/list ([block listOfBlock] [label listOfLabel]) (cons label block)))
 
@@ -780,7 +778,6 @@
     [(X86Program info block-dict)
      (set! label->live (list (cons 'conclusion (set (Reg 'rax) (Reg 'rsp)))))  ;; We add this because there is no entry for conclusion in our basic-blocks dict
      (define cfg (dict-ref info 'cfg))
-     ;(printf (graphviz cfg))
      (define t-cfg (transpose cfg))
      (define tsort-order (tsort t-cfg))   ;; list of vertices
      (define label-block-mapping (uncover-blocks tsort-order block-dict))
@@ -938,19 +935,19 @@
             (used-callee (cdr allocation)))]
        [_ (used-callee (cdr allocation))])]))
 
+;; Handles each of the block and generates a new corresponding block
 (define (new-allocation block mapping offset)
   (match block
     [(Block info instrs) (Block info (allocate-register-helper instrs mapping offset))]
     [_ (error "Error")]))
 
+;; Replaces variable names with registers or stack locations
 (define (allocate-registers p)
     (match p
         [(X86Program info exp)
             (define graph (dict-ref info 'conflict))
             (define nodes (sequence->list (in-vertices graph)))
-            ; Print the nodes
-            (printf "Printing the nodes :- \n")
-            (printf "~a\n" nodes)
+            
             ; create the priority queue by passing in the comparator
             (define q (make-pqueue tup->))
             (for ([i nodes])
@@ -995,26 +992,35 @@
        [else (list
               (Instr 'movq (list (Deref 'rbp int1) (Reg 'rax)))
               (Instr op (list (Reg 'rax) (Deref 'rbp int2))))])]
+    [(Instr 'cmpq (list  arg1 (Imm n)))
+     (list
+      (Instr 'movq (list (Imm n) (Reg 'rax)))
+      (Instr 'cmpq (list arg1 (Reg 'rax))))]
+    [(Instr 'movzbq (list  arg1 (Imm n)))
+     (list
+      (Instr 'movq (list (Imm n) (Reg 'rax)))
+      (Instr 'mvzbq (list arg1 (Reg 'rax))))]
     [_ (list instr)]))
 
 ;; changes movq and addq with two stack locations as the arguments, since in X86 only 1 memory reference
 ;; per instruction is allowed
-(define (patch-helper instr)
-  (if (null? instr)
+(define (patch-helper instrs)
+  (if (null? instrs)
       (list)
-      (append (patch-one-instr (car instr)) (patch-helper (cdr instr)))))
+      (append (patch-one-instr (car instrs)) (patch-helper (cdr instrs)))))
+
+;; patch block helper
+(define (patch-block-helper block)
+  (match block
+    [(Block info instrs) (Block info (patch-helper instrs))]
+    [_ (error "Error: Unidentified Case in patch-block-helper")]))
 
 ;; patch-instructions : psuedo-x86 -> x86
 (define (patch-instructions p)
   (match p
     [(X86Program info exp)
-     (define block (cdr (car exp)))
-     (match block
-       [(Block block-info instr)
-        (define new-block (Block block-info (patch-helper instr)))
-        (define new-exp (dict-set '() 'start new-block))
-        (X86Program info new-exp)]
-       [_ (error "Error: Unidentified Case")])]
+     (define new-exp (for/list ([block-pair exp]) (cons (car block-pair) (patch-block-helper (dict-ref exp (car block-pair))))))
+     (X86Program info new-exp)]
     [_ (error "Error: Unidentified Case")]))
 
 
@@ -1070,9 +1076,9 @@
      ("instruction selection" ,select-instructions ,interp-x86-1)
      ("uncover live" ,uncover-live-pass ,interp-x86-1)
      ("build graph" ,build-graph ,interp-x86-1)
-    ;  ("assign homes" ,assign-homes ,interp-x86-0)
+     ;;("assign homes" ,assign-homes ,interp-x86-0)
      ("allocate-registers" ,allocate-registers ,interp-x86-1)
-     ;("patch instructions" ,patch-instructions ,interp-x86-0)
-     ;("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
+     ("patch instructions" ,patch-instructions ,interp-x86-1)
+     ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-1)
      ))
 
