@@ -684,7 +684,9 @@
        [(Imm x) (set b)]
        [_ (set b)])]
     [(Instr 'cmpq (list a b))
-     (set a b)]
+     (match a
+       [(Imm x) (match b [(Imm y) (set)] [_ (set b)])]
+       [_ (match b [(Imm y) (set a)] [_ (set a b)])])]
     [(Instr 'set (list a b))
      (set)]
     [(Instr 'movzbq (list a b))
@@ -755,7 +757,7 @@
      (match block
        [(Block b-info instrs)
         (define last-instr (last instrs))
-        (define second-last-instr (if (< 1 (length instrs)) (cadr (reverse instrs)) (Retq)))
+        (define second-last-instr (if (< 1 (length instrs)) (cadr (reverse instrs)) (Retq))) ;; Adding (Retq) so that the default case matches for second-last-instr
         (define live-before-set (match last-instr
                       [(Retq) (set)]
                       [_
@@ -792,6 +794,8 @@
   (match instr
     [(Instr 'movq (list a b))
      (map (lambda (x) (if (or (equal? x a) (equal? x b)) (list) (list b x))) (set->list live-after-set))]
+    [(Instr 'movzbq (list a b))
+     (map (lambda (x) (if (or (equal? x (Reg 'rax)) (equal? x b)) (list) (list b x))) (set->list live-after-set))] ;; CHECK IF THIS IS CORRECT !!
     [_
      (define write-sett (write-set instr))
      (map (lambda (x) (if (equal? (car x) (cadr x)) (list) x)) (cartesian-product (set->list write-sett) (set->list live-after-set)))]
@@ -807,21 +811,23 @@
       (generate-edges (car instrs) (car live-after))
       (build-graph-exp (cdr instrs) (cdr live-after)))]))
 
+;; Build the graph for each block
+(define (build-graph-block block)
+  (match block
+    [(Block b-info instrs)
+     (define live-bef (dict-ref b-info 'live-before))
+     (define edges (build-graph-exp instrs (cdr live-bef)))
+     (remove-redundant-edges (remove-empty-edge edges))]
+    [_ (error "Error : Unidentified Case while matching block in build-graph-block")]))
 
 ;; Build interference graph
 (define (build-graph p)
   (match p
     [(X86Program info exp)
-     (define block (dict-ref exp 'start))
-     (match block
-       [(Block b-info instrs)
-        (define live-bef (dict-ref b-info 'live-before))
-        (define edges (build-graph-exp instrs (cdr live-bef)))
-        (define correct-edges  (remove-redundant-edges (remove-empty-edge edges)))
-        ;;(print correct-edges)
-        (printf (graphviz (undirected-graph correct-edges)))
-        (X86Program (dict-set info 'conflict (undirected-graph correct-edges)) exp)]
-       [_ (error "Error: Unidentified Case while matching Block of X86Program in build-graph pass")])]
+     (define edge-list (foldl append (list) (for/list ([block-pair exp]) (build-graph-block (dict-ref exp (car block-pair)) ))))
+     (define correct-edges  (remove-redundant-edges (remove-empty-edge edge-list)))
+     (printf (graphviz (undirected-graph correct-edges)))
+     (X86Program (dict-set info 'conflict (undirected-graph correct-edges)) exp)]
     [_ (error "Error: Unidentified Case while matching X86Program in build-graph pass")]))
 
 ;; Creates a dictionary where every node is mapped to -1 (which indicates not visited)
@@ -931,48 +937,48 @@
             (cons (Reg r) (used-callee (cdr allocation)))
             (used-callee (cdr allocation)))]
        [_ (used-callee (cdr allocation))])]))
-  
+
+(define (new-allocation block mapping offset)
+  (match block
+    [(Block info instrs) (Block info (allocate-register-helper instrs mapping offset))]
+    [_ (error "Error")]))
+
 (define (allocate-registers p)
     (match p
         [(X86Program info exp)
-            (define block (dict-ref exp 'start))
-            (match block
-                [(Block block-info instr)
-                    (define graph (dict-ref info 'conflict))
-                    (define nodes (sequence->list (in-vertices graph)))
-                    ; Print the nodes
-                    (printf "Printing the nodes :- \n")
-                    (printf "~a\n" nodes)
-                    ; create the priority queue by passing in the comparator
-                    (define q (make-pqueue tup->))
+            (define graph (dict-ref info 'conflict))
+            (define nodes (sequence->list (in-vertices graph)))
+            ; Print the nodes
+            (printf "Printing the nodes :- \n")
+            (printf "~a\n" nodes)
+            ; create the priority queue by passing in the comparator
+            (define q (make-pqueue tup->))
+            (for ([i nodes])
+              (pqueue-push! q (tup i (sequence-length (in-neighbors graph i)))))
+            ; Mapping between nodes and it's saturation list
+            (define saturation (map (lambda (x) (cons x (list))) nodes))
+            ; Initially every Variable is assigned -1 as the color and -2 for the Registers
+            (define colours (make-colors nodes '()))
+            
+            (define colouring (dsatur q colours saturation graph))
+            (define register-list (list (Reg 'rbx) (Reg 'r12) (Reg 'r13) (Reg 'rcx)))
+            (define color-list (remove-duplicates (dict-values colouring)))
+            (printf "Printing the color-list :- \n")
+            (printf "~a\n" color-list)
+            (define spilled-vars (let ([x (- (- (length color-list) 1) (length register-list))]) (if (> 0 x) 0 x))) 
+            (define new-reg-list (add-stack-locations register-list spilled-vars))
+            (define colourreg (generate-colourreg '() 0 new-reg-list))
                     
-                    (for ([i nodes])
-                      (pqueue-push! q (tup i (sequence-length (in-neighbors graph i)))))
-                    
-                    ; Mapping between nodes and it's saturation list
-                    (define saturation (map (lambda (x) (cons x (list))) nodes))
-                    ; Initially every Variable is assigned -1 as the color and -2 for the Registers
-                    (define colours (make-colors nodes '()))
-                    
-                    (define colouring (dsatur q colours saturation graph))
-                    (define register-list (list (Reg 'rbx) (Reg 'r12) (Reg 'r13) (Reg 'rcx)))
-                    (define color-list (remove-duplicates (dict-values colouring)))
-                    (printf "Printing the color-list :- \n")
-                    (printf "~a\n" color-list)
-                    (define spilled-vars (let ([x (- (- (length color-list) 1) (length register-list))]) (if (> 0 x) 0 x))) 
-                    (define new-reg-list (add-stack-locations register-list spilled-vars))
-                    (define colourreg (generate-colourreg '() 0 new-reg-list))
-                    
-                    (define mapping (allocate-create-mapping nodes colouring colourreg))
-                    (printf "Printing the mapping :- \n")
-                    (printf "~a\n" mapping)
-                    (define callee-reg (remove-duplicates (used-callee (dict-values mapping))))
-                    (define n-info (dict-set info 'used_callee callee-reg))
-                    (define new-info (dict-set n-info 'spilled-vars spilled-vars))
-                    (define new-block (Block block-info (allocate-register-helper instr mapping (* 8 (length callee-reg)))))
-                    (define new-exp (dict-set '() 'start new-block))
-                    (X86Program new-info new-exp)]
-                [_ (error "Error: Unidentified Case while matching block")])]
+            (define mapping (allocate-create-mapping nodes colouring colourreg))
+            (printf "Printing the mapping :- \n")
+            (printf "~a\n" mapping)
+            (define callee-reg (remove-duplicates (used-callee (dict-values mapping))))
+            (define n-info (dict-set info 'used_callee callee-reg))
+            (define new-info (dict-set n-info 'spilled-vars spilled-vars))
+            (define new-exp (for/list ([block-pair exp]) (cons (car block-pair) (new-allocation (dict-ref exp (car block-pair)) mapping (* 8 (length callee-reg))))))
+            ;(define new-block (Block block-info (allocate-register-helper instr mapping (* 8 (length callee-reg)))))
+            ;(define new-exp (dict-set '() 'start new-block))
+            (X86Program new-info new-exp)]
         [_ (error "Error: Unidentified Case while matching program in allocate registers pass")]))
 
 
@@ -1063,9 +1069,9 @@
      ("explicate control" ,explicate-control ,interp-Cif)
      ("instruction selection" ,select-instructions ,interp-x86-1)
      ("uncover live" ,uncover-live-pass ,interp-x86-1)
-     ;("build graph" ,build-graph ,interp-x86-1)
+     ("build graph" ,build-graph ,interp-x86-1)
     ;  ("assign homes" ,assign-homes ,interp-x86-0)
-     ;("allocate-registers" ,allocate-registers ,interp-x86-0)
+     ("allocate-registers" ,allocate-registers ,interp-x86-1)
      ;("patch instructions" ,patch-instructions ,interp-x86-0)
      ;("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-0)
      ))
