@@ -958,7 +958,7 @@
             (define colours (make-colors nodes '()))
             
             (define colouring (dsatur q colours saturation graph))
-            (define register-list (list (Reg 'rbx) (Reg 'r12) (Reg 'r13) (Reg 'rcx)))
+            (define register-list (list (Reg 'rbx) (Reg 'r12) (Reg 'r13) (Reg 'r14)))
             (define color-list (remove-duplicates (dict-values colouring)))
             (printf "Printing the color-list :- \n")
             (printf "~a\n" color-list)
