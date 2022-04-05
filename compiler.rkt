@@ -130,6 +130,61 @@
     [(Program info e) (Program info ((uniquify-exp '()) e))]
     [_ (error "Error: Unidentified Case in uniquify")]))
 
+;; collects all the variables which are mutating
+(define (collect-set! exp)
+  (match exp
+    [(Var x) (set)]
+    [(Int n) (set)]
+    [(Bool b) (set)]
+    [(Void) (set)]
+    [(Let x e body)
+     (set-union (collect-set! e) (collect-set! body))]
+    [(If e1 e2 e3)
+     (set-union (collect-set! e1) (collect-set! e2) (collect-set! e3))]
+    [(SetBang var rhs)
+     (set-union (set var) (collect-set! rhs))]
+    [(WhileLoop cnd body)
+     (set-union (collect-set! cnd) (collect-set! body))]
+    [(Begin es body)
+     (set-union (foldl set-union (set) (for/list ([e es]) (collect-set! e))) (collect-set! body))]
+    [(Prim op es)
+     (foldl set-union (set) (for/list ([e es]) (collect-set! e)))]
+    [_ (error "Error: Unidentified Case in collect-set!")]))
+
+;; Replace the occurences of mutable variables with GetBang
+(define ((uncover-get! vars) exp)
+  (match exp
+    [(Var x)
+     (if (set-member? vars x)
+         (GetBang x)
+         (Var x))]
+    [(Int n) (Int n)]
+    [(Bool b) (Bool b)]
+    [(Void) (Void)]
+    [(Let x e body)
+     (Let x ((uncover-get! vars) e) ((uncover-get! vars) body))]
+    [(If e1 e2 e3)
+     (If ((uncover-get! vars) e1) ((uncover-get! vars) e2) ((uncover-get! vars) e3))]
+    [(SetBang var rhs)
+     (SetBang var ((uncover-get! vars) rhs))]
+    [(WhileLoop cnd body)
+     (WhileLoop ((uncover-get! vars) cnd) ((uncover-get! vars) body))]
+    [(Begin es body)
+     (define new-es (for/list ([e es]) ((uncover-get! vars) e)))
+     (Begin new-es ((uncover-get! vars) body))]
+    [(Prim op es)
+     (Prim op (for/list ([e es]) ((uncover-get! vars) e)))]
+    [_ (error "Error: Unidentified Case in uncover-get!")]))
+
+;; uncover-get
+(define (uncover-get p)
+  (match p
+    [(Program info e)
+     (define vars (collect-set! e))
+     (Program info ((uncover-get! vars) e))]
+    [_ (error "Error: Unidentified Case in uniquify")]))
+
+
 ;; Checks if an expression is atomic (i.e a variable or an integer)
 (define (atom? exp)
   (match exp
@@ -1087,6 +1142,7 @@
      ;;("optimized-par-eval" ,opt-par-lvar ,interp-Lvar)
      ("shrink" ,shrink ,interp-Lwhile)
      ("uniquify" ,uniquify ,interp-Lwhile)
+     ("uncover-get" ,uncover-get ,interp-Lwhile)
      ;;("remove complex opera*" ,remove-complex-opera* ,interp-Lif)
      ;;("explicate control" ,explicate-control ,interp-Cif)
      ;;("instruction selection" ,select-instructions ,interp-x86-1)
