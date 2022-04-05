@@ -191,6 +191,7 @@
     [(Var x) #t]
     [(Int n) #t]
     [(Bool b) #t]
+    [(Void) #t]
     [_ #f]))
 
 ;; Converts the complex expressions to atomic expressions (Refer the grammar on page 27 for atomic expressions)
@@ -220,7 +221,7 @@
           (Prim op (list (Var new-name))))]
     [else (error "Error: Unidentified Case in rco_atom")]))
     
-;; Converts complex expression using the above function rco_atom only if there is a need to
+;; Converts complex expression using the above function rco_atom, only if there is a need to
 ;; introduce a new variable, for other cases rco_exp function handles the expression
 ;; READ rco_exp --- output ---> As an expression which does not contain any complex operation,
 ;; but it might not necessarily be an atom.
@@ -229,6 +230,15 @@
     [(Var x) (Var x)]
     [(Int n) (Int n)]
     [(Bool b) (Bool b)]
+    [(Void) (Void)]
+    [(GetBang var) (GetBang var)]
+    
+    [(SetBang var rhs) (SetBang var (rco_exp rhs))]
+    [(Begin es body)
+     (define new-exp (for/list ([e es]) (rco_exp e)))
+     (Begin new-exp (rco_exp body))]
+    [(WhileLoop cnd body)
+     (WhileLoop (rco_exp cnd) (rco_exp body))]
     [(Prim 'read '()) (Prim 'read '())]
     ;; This will cover,  not, - (unary) 
     [(Prim op (list e1))
@@ -1143,7 +1153,7 @@
      ("shrink" ,shrink ,interp-Lwhile)
      ("uniquify" ,uniquify ,interp-Lwhile)
      ("uncover-get" ,uncover-get ,interp-Lwhile)
-     ;;("remove complex opera*" ,remove-complex-opera* ,interp-Lif)
+     ("remove complex opera*" ,remove-complex-opera* ,interp-Lwhile)
      ;;("explicate control" ,explicate-control ,interp-Cif)
      ;;("instruction selection" ,select-instructions ,interp-x86-1)
      ;;("uncover live" ,uncover-live-pass ,interp-x86-1)
