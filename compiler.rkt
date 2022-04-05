@@ -102,11 +102,19 @@
        (Var (dict-ref env x))]
       [(Int n) (Int n)]
       [(Bool b) (Bool b)]
+      [(Void) (Void)]
       [(If e1 e2 e3)
        (define e1^ ((uniquify-exp env) e1))
        (define e2^ ((uniquify-exp env) e2))
        (define e3^ ((uniquify-exp env) e3))
        (If e1^ e2^ e3^)]
+      [(SetBang var rhs)
+       (SetBang (dict-ref env var) ((uniquify-exp env) rhs))]
+      [(WhileLoop cnd body)
+       (WhileLoop ((uniquify-exp env) cnd) ((uniquify-exp env) body))]
+      [(Begin es body)
+       (define new-exp-list (for/list ([e es]) ((uniquify-exp env) e)))
+       (Begin new-exp-list ((uniquify-exp env) body))]
       [(Let x e body)
        (define rhs ((uniquify-exp env) e))
        (define new-name (gensym x))
@@ -1078,7 +1086,7 @@
      ;;("partial-evaluator" ,partial-lvar ,interp-Lvar)
      ;;("optimized-par-eval" ,opt-par-lvar ,interp-Lvar)
      ("shrink" ,shrink ,interp-Lwhile)
-     ;;("uniquify" ,uniquify ,interp-Lif)
+     ("uniquify" ,uniquify ,interp-Lwhile)
      ;;("remove complex opera*" ,remove-complex-opera* ,interp-Lif)
      ;;("explicate control" ,explicate-control ,interp-Cif)
      ;;("instruction selection" ,select-instructions ,interp-x86-1)
