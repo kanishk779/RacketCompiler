@@ -10,6 +10,7 @@
 (require "utilities.rkt")
 (require "interp.rkt")
 (require "interp-Lif.rkt")
+(require "interp-Lwhile.rkt")
 (require "priority_queue.rkt")
 (require "multigraph.rkt")
 (provide (all-defined-out))
@@ -65,11 +66,18 @@
   (match exp
     [(Int int) exp]
     [(Bool b) exp]
+    [(Void) exp]
     [(Var var) exp]
     [(If e1 e2 e3)
      (If (shrink-exp e1) (shrink-exp e2) (shrink-exp e3))]
     [(Let x e body)
      (Let x (shrink-exp e) (shrink-exp body))]
+    [(SetBang var rhs) (SetBang var (shrink-exp rhs))]
+    [(WhileLoop cnd body)
+     (WhileLoop (shrink-exp cnd) (shrink-exp body))]
+    [(Begin es body)
+     (define new-exp-list (for/list ([e es]) (shrink-exp e)))
+     (Begin new-exp-list (shrink-exp body))]
     [(Prim 'and (list e1 e2))
      (If (shrink-exp e1) (shrink-exp e2) (Bool #f))]
     [(Prim 'or (list e1 e2))
@@ -1069,16 +1077,16 @@
      ;; Uncomment the following passes as you finish them.
      ;;("partial-evaluator" ,partial-lvar ,interp-Lvar)
      ;;("optimized-par-eval" ,opt-par-lvar ,interp-Lvar)
-     ("shrink" ,shrink ,interp-Lif)
-     ("uniquify" ,uniquify ,interp-Lif)
-     ("remove complex opera*" ,remove-complex-opera* ,interp-Lif)
-     ("explicate control" ,explicate-control ,interp-Cif)
-     ("instruction selection" ,select-instructions ,interp-x86-1)
-     ("uncover live" ,uncover-live-pass ,interp-x86-1)
-     ("build graph" ,build-graph ,interp-x86-1)
-     ;;("assign homes" ,assign-homes ,interp-x86-0)
-     ("allocate-registers" ,allocate-registers ,interp-x86-1)
-     ("patch instructions" ,patch-instructions ,interp-x86-1)
-     ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-1)
+     ("shrink" ,shrink ,interp-Lwhile)
+     ;;("uniquify" ,uniquify ,interp-Lif)
+     ;;("remove complex opera*" ,remove-complex-opera* ,interp-Lif)
+     ;;("explicate control" ,explicate-control ,interp-Cif)
+     ;;("instruction selection" ,select-instructions ,interp-x86-1)
+     ;;("uncover live" ,uncover-live-pass ,interp-x86-1)
+     ;;("build graph" ,build-graph ,interp-x86-1)
+         ;;("assign homes" ,assign-homes ,interp-x86-0)
+     ;;("allocate-registers" ,allocate-registers ,interp-x86-1)
+     ;;("patch instructions" ,patch-instructions ,interp-x86-1)
+     ;;("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-1)
      ))
 

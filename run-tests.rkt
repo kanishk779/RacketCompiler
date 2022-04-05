@@ -7,7 +7,9 @@
 (require "interp.rkt")
 (require "compiler.rkt")
 (require "interp-Lif.rkt")
+(require "interp-Lwhile.rkt")
 (require "type-check-Lif.rkt")
+(require "type-check-Lwhile.rkt")
 (debug-level 1)
 (AST-output-syntax 'concrete-syntax)
 
@@ -29,10 +31,10 @@
 ;; NOTE -> we can replace "var" with "if" and vice-versa for testing different versions of the languages
 
 ;; Replace the #f with the type-checker
-(interp-tests "var" type-check-Lif compiler-passes interp-Lif "var_test" (tests-for "var"))
+(interp-tests "while" type-check-Lwhile compiler-passes interp-Lwhile "while_test" (tests-for "while"))
 
 
 
 ;; Uncomment the following when all the passes are complete to test the final x86 code.
-(compiler-tests "var" type-check-Lif compiler-passes "var_test" (tests-for "var"))
+;;(compiler-tests "var" type-check-Lif compiler-passes "var_test" (tests-for "var"))
 
