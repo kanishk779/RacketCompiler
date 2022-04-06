@@ -7,6 +7,7 @@
 (require "interp-Lvar.rkt")
 (require "interp-Cvar.rkt")
 (require "interp-Cif.rkt")
+(require "interp-Cwhile.rkt")
 (require "utilities.rkt")
 (require "interp.rkt")
 (require "interp-Lif.rkt")
@@ -290,20 +291,64 @@
   (set! basic-blocks (cons (cons name tail) basic-blocks))
   (Goto name))
 
-;; explicate-effect-list
+;; explicate-effect-list handles a list of expressions in effect position
 (define (explicate-effect-list exp cont)
   (match exp
-    [null? (values cont (list))]
+    [(list) (values cont (list))]
     [_
      (define-values (new-cont var-list) (explicate-effect-list (cdr exp) cont))
      (define-values (stmt var-lst) (explicate-effect (car exp) new-cont))
-     (values stmt (append var-lst var-list))]
+     (values stmt (append var-lst var-list))]))
 
+;; explicate-effect for handling side-effects returns stmts and var-list
+(define (explicate-effect exp cont)
+  (match exp
+    [(Int n) (values cont (list))]
+    [(Var x) (values cont (list))]
+    [(Bool b) (values cont (list))]
+    [(Void) (values cont (list))]
+    [(GetBang var) (values cont (list))]
+    [(SetBang var rhs)
+     (printf "setbang in effect\n")
+     (explicate-assign rhs var cont (list))]
+    [(Prim 'read es)                              ;; Read can be statement now
+     (values (Seq (Prim 'read es) cont) (list))]
+    [exp-list #:when (list? exp-list)
+     (printf "exp is a list, with length : ~a\n" (length exp))
+     (explicate-effect-list exp cont)]
+    [(If cnd thn els) ;; Recursively call on then and else block
+     (define-values (thn^ var-thn) (explicate-effect thn cont))
+     (define-values (els^ els-thn) (explicate-effect els cont))
+     (define thn-block (create-block thn^))
+     (define els-block (create-block els^))
+     (define-values (stmt var-lst) (explicate-pred cnd thn-block els-block))
+     (values stmt (append var-lst var-thn els-thn))]
+    [(Let x rhs body)
+     (define-values (body^ var-lst) (explicate-effect body cont))
+     (explicate-assign rhs x body^ var-lst)]
+    [(Begin es body)
+     (printf "Begin in effect position\n")
+     (define-values (body^ var-list) (explicate-effect body cont))
+     (define-values (stmt var-lst) (explicate-effect-list es body^))
+     (values stmt (append var-list var-lst))]
+    [(WhileLoop cnd body)
+     (printf "while loop in effect position \n")
+     (define loop-name (gensym 'loop))
+     (define-values (body^ var-list) (explicate-effect body (Goto loop-name)))
+     (define body-block (create-block body^))
+     (define cont-block (create-block cont))
+     (define-values (stmt var-lst) (explicate-pred cnd body-block cont-block))
+     (define loop-block (create-block-name stmt loop-name))
+     (values
+      (Goto loop-name)
+      (append var-lst var-list))]
 
+    [(Prim op es)
+     (values cont (list))]
+    
+    [_ (error "Error: Unidentified Case in explicate-effect" exp)]))
      
      
-     
-  
 ;; explicate-pred for handling the if statements
 (define (explicate-pred cnd thn-block els-block)
   (match cnd
@@ -326,7 +371,10 @@
              thn-block
              els-block)
       (list))]
-    [(Being es body) _]
+    [(Begin es body)
+     (define-values (stmt var-list) (explicate-pred body thn-block els-block))
+     (define-values (stmt^ var-lst) (explicate-effect es stmt))
+     (values stmt^ (append var-list var-lst))]
     [(Prim op es)   ;; Takes care of eq?, <, >, >=, <=
      (values
       (IfStmt (Prim op es)
@@ -369,9 +417,10 @@
      (values
       (Return (Var var)) (list))]
     [(Begin es body)
+     (printf "Is es a list : ~a\n" (list? es))
      (define-values (tail-exp var-list) (explicate-tail body))
-     (define new-tail (explicate-effect es tail-exp)) ;; explicate-effect takes a list of expression and cont stmts, returns a tail-expr
-     (values new-tail var-list)]
+     (define-values (new-tail var-lst) (explicate-effect es tail-exp)) ;; explicate-effect takes a list of expression and cont stmts, returns a tail-expr
+     (values new-tail (append var-list var-lst))]
     [(If cnd thn els)
      (define-values (thn^ var-thn) (explicate-tail thn))
      (define-values (els^ var-els) (explicate-tail els))
@@ -430,11 +479,11 @@
       (cons x var-list))]
     [(Begin es body)
      (define-values (body^ var-lst) (explicate-assign body x cont var-list))
-     (define new-cont (explicate-effect es body^))
-     (values new-cont var-lst)]
+     (define-values (new-cont var-effect) (explicate-effect es body^))
+     (values new-cont (append var-lst var-effect))]
     [(WhileLoop cnd body)
      (define loop-name (gensym 'loop))
-     (define body^ (explicate-effect body (Goto loop-name)))  ;; DOUBT --> should we use explicate-effect or explicate-assign
+     (define-values (body^ var-effect) (explicate-effect body (Goto loop-name)))
      (define body-block (create-block body^))
      (define cont-block (create-block cont))
      (define-values (stmt var-lst) (explicate-pred cnd body-block cont-block))
@@ -442,7 +491,7 @@
      (values
       (Seq
        (Assign (Var x) (Void)) (Goto loop-name))
-      (append var-lst var-list))]
+      (append var-lst var-list var-effect))]
     [(If cnd thn els)
      (define new-block (create-block cont))
      (define-values (thn^ var-thn) (explicate-assign thn x new-block var-list))
@@ -462,7 +511,6 @@
     [(Let y rhs body)
      (define-values (new-exp new-var-list) (explicate-assign body x cont var-list))
      (explicate-assign rhs y new-exp new-var-list)]
-    [(WhileLoop cnd body) 10]
     [_ (error "explicate-assign unhandled case" exp)]))
 
 
@@ -1219,7 +1267,7 @@
      ("uniquify" ,uniquify ,interp-Lwhile)
      ("uncover-get" ,uncover-get ,interp-Lwhile)
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lwhile)
-     ;;("explicate control" ,explicate-control ,interp-Cif)
+     ("explicate control" ,explicate-control ,interp-Cwhile)
      ;;("instruction selection" ,select-instructions ,interp-x86-1)
      ;;("uncover live" ,uncover-live-pass ,interp-x86-1)
      ;;("build graph" ,build-graph ,interp-x86-1)
