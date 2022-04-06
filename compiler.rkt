@@ -285,6 +285,25 @@
        (Goto label))]
     ))
 
+;; Create block with given name
+(define (create-block-name tail name)
+  (set! basic-blocks (cons (cons name tail) basic-blocks))
+  (Goto name))
+
+;; explicate-effect-list
+(define (explicate-effect-list exp cont)
+  (match exp
+    [null? (values cont (list))]
+    [_
+     (define-values (new-cont var-list) (explicate-effect-list (cdr exp) cont))
+     (define-values (stmt var-lst) (explicate-effect (car exp) new-cont))
+     (values stmt (append var-lst var-list))]
+
+
+     
+     
+     
+  
 ;; explicate-pred for handling the if statements
 (define (explicate-pred cnd thn-block els-block)
   (match cnd
@@ -294,6 +313,12 @@
              thn-block
              els-block)
       (list))]
+    [(GetBang var)
+     (values
+      (IfStmt (Prim 'eq? (list (Var var) (Bool #t)))
+              thn-block
+              els-block)
+      (list))]
     [(Bool b) (values (if b thn-block els-block) (list))]
     [(Prim 'not (list x))
      (values
@@ -301,6 +326,7 @@
              thn-block
              els-block)
       (list))]
+    [(Being es body) _]
     [(Prim op es)   ;; Takes care of eq?, <, >, >=, <=
      (values
       (IfStmt (Prim op es)
@@ -324,17 +350,28 @@
 ;; The input to this pass will be the L_var with all the complex operation removed
 ;; which means operands of each operation will be atoms, (i.e Var or Int)
 ;; This is used to generate the tail in the grammar on page 25
+
 (define (explicate-tail exp)
-  (match exp
+  (match exp ;; We assume that WhileLoop, SetBang will not be in tail position --> because all our programs should produce Integers.
     [(Var x)
      (values
       (Return (Var x)) (list))]
+    [(Void)  ;; This will most likely will never be used.
+     (values
+      (Return (Void)) (list))]
     [(Int n)
      (values
       (Return (Int n)) (list))]
     [(Prim op es)
      (values
       (Return (Prim op es)) (list))]
+    [(GetBang var)  ;; Need to verify whether we can get rid of GetBang after RCO (which I am doing currently)
+     (values
+      (Return (Var var)) (list))]
+    [(Begin es body)
+     (define-values (tail-exp var-list) (explicate-tail body))
+     (define new-tail (explicate-effect es tail-exp)) ;; explicate-effect takes a list of expression and cont stmts, returns a tail-expr
+     (values new-tail var-list)]
     [(If cnd thn els)
      (define-values (thn^ var-thn) (explicate-tail thn))
      (define-values (els^ var-els) (explicate-tail els))
@@ -354,6 +391,7 @@
     [(Let x rhs body)
      (define-values (tail-exp var-list) (explicate-tail body))
      (explicate-assign rhs x tail-exp var-list)]
+ 
     [_ (error "explicate-tail unhandled case" exp)]))
 
 ;; This function is for the creating assignment statement in C_var language (Refer the grammar on Page 25)
@@ -364,6 +402,17 @@
       (Seq
        (Assign (Var x) (Var var)) cont)
       (cons x var-list))]
+    [(GetBang var)
+     (values
+      (Seq
+       (Assign (Var x) (Var var)) cont)
+      (cons x var-list))]
+    [(SetBang var rhs)
+     (define-values (rhs^ var-lst) (explicate-assign rhs var cont var-list))
+     (values
+      (Seq
+       (Assign (Var x) (Void)) rhs^)
+      (cons x var-lst))]
     [(Bool b)
      (values
       (Seq
@@ -379,6 +428,21 @@
       (Seq
        (Assign (Var x) (Prim op es)) cont)
       (cons x var-list))]
+    [(Begin es body)
+     (define-values (body^ var-lst) (explicate-assign body x cont var-list))
+     (define new-cont (explicate-effect es body^))
+     (values new-cont var-lst)]
+    [(WhileLoop cnd body)
+     (define loop-name (gensym 'loop))
+     (define body^ (explicate-effect body (Goto loop-name)))  ;; DOUBT --> should we use explicate-effect or explicate-assign
+     (define body-block (create-block body^))
+     (define cont-block (create-block cont))
+     (define-values (stmt var-lst) (explicate-pred cnd body-block cont-block))
+     (define loop-block (create-block-name stmt loop-name))
+     (values
+      (Seq
+       (Assign (Var x) (Void)) (Goto loop-name))
+      (append var-lst var-list))]
     [(If cnd thn els)
      (define new-block (create-block cont))
      (define-values (thn^ var-thn) (explicate-assign thn x new-block var-list))
@@ -396,8 +460,9 @@
          stmt
          (append var-thn var-els var-list var-list))])]   
     [(Let y rhs body)
-     (define-values (tail-exp new-var-list) (explicate-assign body x cont var-list))
-     (explicate-assign rhs y tail-exp new-var-list)]
+     (define-values (new-exp new-var-list) (explicate-assign body x cont var-list))
+     (explicate-assign rhs y new-exp new-var-list)]
+    [(WhileLoop cnd body) 10]
     [_ (error "explicate-assign unhandled case" exp)]))
 
 
