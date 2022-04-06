@@ -579,6 +579,7 @@
   (match exp
     [(Int n) (Imm n)]
     [(Var x) (Var x)]
+    [(Void) (Imm 0)]
     [(Bool b)
      (match b
        [#t (Imm 1)]
@@ -603,6 +604,9 @@
     [(Bool b)
      (list
       (Instr 'movq (list (C->X86 (Bool b)) var)))]
+    [(Void)
+     (list
+      (Instr 'movq (list (C->X86 (Void)) var)))]
     [(Var x)
      (list
       (Instr 'movq (list (Var x) var)))]
@@ -665,6 +669,8 @@
          (list (Instr 'xorq (list (Imm 1) var)))
          (select-exp (Prim 'not (list (Var y))) (Var var)))]
     [(Assign (Var var) es) (select-exp es (Var var))]
+    [(Prim 'read (list))
+     (list (Callq 'read_int 0))]                ;; Read is now allowed as a statement
     [_ (error "Error: Unidentified Case in select-statement")]))
 
 ;; select for tail (Refer the grammar of C_var for tail)
@@ -965,6 +971,28 @@
         (define new-block (Block new-info instrs))
         (cons (cons curr-label new-block) (uncover-blocks (cdr tsort-order) block-dict))]
        [_ (error "Unidentified case in uncover-blocks")])]))
+
+;; Dataflow Analysis
+(define (analyze-dataflow G transfer bottom join)
+  (define mapping (make-hash))
+  (for ([v (in-vertices G)])
+    (dict-set! mapping v bottom))   ;; At the start ever block's live before set will be empty (bottom --> empty set)
+  (define worklist (make-queue))
+  (for ([v (in-vertices G)])
+    (enqueue! worklist v))          ;; Put all the nodes in the queue
+  (define trans-G (transpose G))
+  (while (not (queue-empty? worklist))
+         (define node (dequeue! worklist))
+         (define input (for/fold ([state bottom]) ([pred (in-neighbors trans-G node)])
+                         (join state (dict-ref mapping pred))))
+         (define output (transfer node input))  ;; block and the union of live-before set of all successor blocks
+
+         (cond [(not (equal? output (dict-ref mapping node))) ;; If the live-before is different from previous iteration
+                (dict-set! mapping node output)
+                (for ([v (in-neighbors G node)])
+                  (enqueue! worklist v))]))                   ;; then put the neighbors in the queue
+
+  mapping)  ;; Return the mapping of every block with it's live before set (And it also finds the live variables for all instrs)
      
 ;; Uncover-live pass
 (define (uncover-live-pass p)
@@ -1268,7 +1296,7 @@
      ("uncover-get" ,uncover-get ,interp-Lwhile)
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lwhile)
      ("explicate control" ,explicate-control ,interp-Cwhile)
-     ;;("instruction selection" ,select-instructions ,interp-x86-1)
+     ("instruction selection" ,select-instructions ,interp-x86-1)
      ;;("uncover live" ,uncover-live-pass ,interp-x86-1)
      ;;("build graph" ,build-graph ,interp-x86-1)
          ;;("assign homes" ,assign-homes ,interp-x86-0)
