@@ -3,6 +3,7 @@
 (require racket/dict)
 (require racket/fixnum)
 (require graph)
+(require data/queue)
 (require "interp-Lint.rkt")
 (require "interp-Lvar.rkt")
 (require "interp-Cvar.rkt")
@@ -932,10 +933,12 @@
   
 ;; dictionary mapping labels to the live-before set of the blocks
 (define label->live (list))
+(define bdict (list))
 
 ;; Takes a X86 instruction and live-before set and gives the live after set
 (define (live-before-op instr live-before)
-  (set-union (set-subtract live-before (write-set instr)) (read-set instr)))
+  (printf "Live before is a ~a\n" live-before)
+  (set-union (set-subtract (list->set live-before) (write-set instr)) (read-set instr)))
   
 ;; Takes a list of instructions and compute the live after sets, (list of sets)
 (define (live-before instrs live-before-set)
@@ -972,11 +975,36 @@
         (cons (cons curr-label new-block) (uncover-blocks (cdr tsort-order) block-dict))]
        [_ (error "Unidentified case in uncover-blocks")])]))
 
+
+(define (analyze-single-block curr-label live-after) 
+     (define block (dict-ref bdict curr-label))
+     (match block
+       [(Block b-info instrs)
+        (define last-instr (last instrs))
+        (define second-last-instr (if (< 1 (length instrs)) (cadr (reverse instrs)) (Retq))) ;; Adding (Retq) so that the default case matches for second-last-instr
+        (define live-before-set (match last-instr
+                      [(Retq) (set)]
+                      [_
+                       (define other-label (match last-instr [(Jmp lab) lab] [_ (error "The last instruction in X86 is incorrect")]))
+                       (define live-vars (dict-ref label->live other-label))
+                       (match second-last-instr
+                         [(JmpIf cc next-label) (set-union (dict-ref label->live next-label) live-vars)]
+                         [_ live-vars])]))
+                        
+        (define live-before-list (reverse (live-before (reverse instrs) live-before-set))) ;; give live-before-set as input])))
+        (set! label->live (cons (cons curr-label (car live-before-list)) label->live))
+        (define new-info (dict-set b-info 'live-before live-before-list))
+        (define new-block (Block new-info instrs))
+        (printf "\n\nnew block : ~a\n\n" new-block)
+        (set! bdict (dict-set bdict curr-label new-block))
+        live-before-set]))
+
 ;; Dataflow Analysis
 (define (analyze-dataflow G transfer bottom join)
-  (define mapping (make-hash))
+  ; (define mapping (make-hash))
   (for ([v (in-vertices G)])
-    (dict-set! mapping v bottom))   ;; At the start ever block's live before set will be empty (bottom --> empty set)
+    (set! label->live (cons (cons v bottom) label->live)))   ;; At the start ever block's live before set will be empty (bottom --> empty set)
+    
   (define worklist (make-queue))
   (for ([v (in-vertices G)])
     (enqueue! worklist v))          ;; Put all the nodes in the queue
@@ -984,16 +1012,17 @@
   (while (not (queue-empty? worklist))
          (define node (dequeue! worklist))
          (define input (for/fold ([state bottom]) ([pred (in-neighbors trans-G node)])
-                         (join state (dict-ref mapping pred))))
+                         (join state (dict-ref label->live pred))))
          (define output (transfer node input))  ;; block and the union of live-before set of all successor blocks
 
-         (cond [(not (equal? output (dict-ref mapping node))) ;; If the live-before is different from previous iteration
-                (dict-set! mapping node output)
+         (cond [(not (equal? output (dict-ref label->live node))) ;; If the live-before is different from previous iteration
+                (set label->live (dict-set label->live node output))
                 (for ([v (in-neighbors G node)])
                   (enqueue! worklist v))]))                   ;; then put the neighbors in the queue
 
-  mapping)  ;; Return the mapping of every block with it's live before set (And it also finds the live variables for all instrs)
-     
+  label->live)  ;; Return the mapping of every block with it's live before set (And it also finds the live variables for all instrs)
+
+
 ;; Uncover-live pass
 (define (uncover-live-pass p)
   (match p
@@ -1001,10 +1030,12 @@
      (set! label->live (list (cons 'conclusion (set (Reg 'rax) (Reg 'rsp)))))  ;; We add this because there is no entry for conclusion in our basic-blocks dict
      (define cfg (dict-ref info 'cfg))
      (define t-cfg (transpose cfg))
-     (define tsort-order (tsort t-cfg))   ;; list of vertices
-     (define label-block-mapping (uncover-blocks tsort-order block-dict))
-     (printf "label-block-mapping : ~a\n" label-block-mapping)
-     (X86Program info label-block-mapping)]
+    ;  (define tsort-order (tsort t-cfg))   ;; list of vertices
+    ;  (define label-block-mapping (uncover-blocks tsort-order block-dict))
+    (set! bdict block-dict)
+    (printf "\n\nlabel-block-mappingAAAAAAAA : ~a\n" bdict)
+    (define label-block-mapping (analyze-dataflow t-cfg analyze-single-block (set) set-union))
+     (X86Program info bdict)]
      
     [_ (error "Error: Unidentified Case while matching X86Program in uncover-live-pass")]))
 
@@ -1297,11 +1328,11 @@
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lwhile)
      ("explicate control" ,explicate-control ,interp-Cwhile)
      ("instruction selection" ,select-instructions ,interp-x86-1)
-     ;;("uncover live" ,uncover-live-pass ,interp-x86-1)
-     ;;("build graph" ,build-graph ,interp-x86-1)
-         ;;("assign homes" ,assign-homes ,interp-x86-0)
-     ;;("allocate-registers" ,allocate-registers ,interp-x86-1)
-     ;;("patch instructions" ,patch-instructions ,interp-x86-1)
-     ;;("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-1)
+     ("uncover live" ,uncover-live-pass ,interp-x86-1)
+     ("build graph" ,build-graph ,interp-x86-1)
+        ;  ("assign homes" ,assign-homes ,interp-x86-0)
+     ("allocate-registers" ,allocate-registers ,interp-x86-1)
+     ("patch instructions" ,patch-instructions ,interp-x86-1)
+     ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-1)
      ))
 

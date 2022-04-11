@@ -32,6 +32,8 @@
 
 ;; Replace the #f with the type-checker
 (interp-tests "while" type-check-Lwhile compiler-passes interp-Lwhile "while_test" (tests-for "while"))
+; (interp-tests "aman" type-check-Lwhile compiler-passes interp-Lwhile "aman_test" (tests-for "aman"))
+; (interp-tests "var" #f compiler-passes interp-Lvar "var_test" (tests-for "var"))
 
 
 
