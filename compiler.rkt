@@ -86,6 +86,8 @@
      (If (shrink-exp e1) (Bool #t) (shrink-exp e2))]
     [(Prim op es)
      (Prim op (for/list ([e es]) (shrink-exp e)))]
+    [(HasType es type)
+      (HasType (shrink-exp es) type)]
     [_ (error "Error: Unidentified Case in shrink-exp")]
     ))
 
@@ -195,6 +197,23 @@
     [(Bool b) #t]
     [(Void) #t]
     [_ #f]))
+
+(define (expose-allocation-exp exp)
+  (match exp
+    [(Collect int)
+      ()]
+    [(Allocate int type)
+      ()]
+    [(GlobalValue var)
+      ()]
+    [_ (error "Error: Unidentified Case in expose allocation")]))
+
+
+(define (expose-allocation exp)
+  (match exp  
+    [(Program info es) 
+      (expose-allocation-exp es)]
+    [_ (error "Error: Unidentified Case in expose allocation")]))
 
 ;; Converts the complex expressions to atomic expressions (Refer the grammar on page 27 for atomic expressions)
 ;; by introducing new variables using the Let feature of Racket.
