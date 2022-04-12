@@ -976,17 +976,28 @@
        [_ (error "Unidentified case in uncover-blocks")])]))
 
 
-
-(define (analyze-single-block curr-label live-before-of-successors) 
+(define (analyze-single-block curr-label live-after) 
      (define block (dict-ref bdict curr-label))
      (match block
-       [(Block b-info instrs)                  
-        (define live-before-list (reverse (live-before (reverse instrs) live-before-of-successors))) ;; give live-before-set as input])))
-        ; (set! label->live (cons (cons curr-label (car live-before-list)) label->live))
+       [(Block b-info instrs)
+        (define last-instr (last instrs))
+        (define second-last-instr (if (< 1 (length instrs)) (cadr (reverse instrs)) (Retq))) ;; Adding (Retq) so that the default case matches for second-last-instr
+        (define live-before-set (match last-instr
+                      [(Retq) (set)]
+                      [_
+                       (define other-label (match last-instr [(Jmp lab) lab] [_ (error "The last instruction in X86 is incorrect")]))
+                       (define live-vars (dict-ref label->live other-label))
+                       (match second-last-instr
+                         [(JmpIf cc next-label) (set-union (dict-ref label->live next-label) live-vars)]
+                         [_ live-vars])]))
+                        
+        (define live-before-list (reverse (live-before (reverse instrs) live-before-set))) ;; give live-before-set as input])))
+        (set! label->live (cons (cons curr-label (car live-before-list)) label->live))
         (define new-info (dict-set b-info 'live-before live-before-list))
         (define new-block (Block new-info instrs))
+        (printf "\n\nnew block : ~a\n\n" new-block)
         (set! bdict (dict-set bdict curr-label new-block))
-        (car live-before-list)]))
+        live-before-set]))
 
 ;; Dataflow Analysis
 (define (analyze-dataflow G transfer bottom join)
@@ -1003,9 +1014,9 @@
          (define input (for/fold ([state bottom]) ([pred (in-neighbors trans-G node)])
                          (join state (dict-ref label->live pred))))
          (define output (transfer node input))  ;; block and the union of live-before set of all successor blocks
-          
+
          (cond [(not (equal? output (dict-ref label->live node))) ;; If the live-before is different from previous iteration
-                (set! label->live (dict-set label->live node output))
+                (set label->live (dict-set label->live node output))
                 (for ([v (in-neighbors G node)])
                   (enqueue! worklist v))]))                   ;; then put the neighbors in the queue
 
@@ -1022,7 +1033,7 @@
     ;  (define tsort-order (tsort t-cfg))   ;; list of vertices
     ;  (define label-block-mapping (uncover-blocks tsort-order block-dict))
     (set! bdict block-dict)
-
+    (printf "\n\nlabel-block-mappingAAAAAAAA : ~a\n" bdict)
     (define label-block-mapping (analyze-dataflow t-cfg analyze-single-block (set) set-union))
      (X86Program info bdict)]
      
