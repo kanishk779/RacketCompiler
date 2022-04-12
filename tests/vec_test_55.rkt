@@ -1,0 +1,1 @@
+(vector-ref (vector-ref (vector (vector 43)) 0) 0)

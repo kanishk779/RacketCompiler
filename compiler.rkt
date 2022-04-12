@@ -129,6 +129,7 @@
        (Let new-name rhs ((uniquify-exp new-env) body))]
       [(Prim op es)
        (Prim op (for/list ([e es]) ((uniquify-exp env) e)))]
+      [(HasType ex t) (HasType ((uniquify-exp env) ex) t)]
       [_ (error "Error: Unidentified Case in uniquify-exp")])))
 
 ;; uniquify : R1 -> R1
@@ -156,6 +157,7 @@
      (set-union (foldl set-union (set) (for/list ([e es]) (collect-set! e))) (collect-set! body))]
     [(Prim op es)
      (foldl set-union (set) (for/list ([e es]) (collect-set! e)))]
+    [(HasType ex t) (collect-set! ex)]
     [_ (error "Error: Unidentified Case in collect-set!")]))
 
 ;; Replace the occurences of mutable variables with GetBang
@@ -181,6 +183,7 @@
      (Begin new-es ((uncover-get! vars) body))]
     [(Prim op es)
      (Prim op (for/list ([e es]) ((uncover-get! vars) e)))]
+    [(HasType ex t) (HasType ((uncover-get! vars) ex) t)]
     [_ (error "Error: Unidentified Case in uncover-get!")]))
 
 ;; uncover-get
@@ -189,8 +192,65 @@
     [(Program info e)
      (define vars (collect-set! e))
      (Program info ((uncover-get! vars) e))]
-    [_ (error "Error: Unidentified Case in uniquify")]))
+    [_ (error "Error: Unidentified Case in uncover-get")]))
 
+(define (expose-allocation-exp exp)
+  (match exp
+    [(Var x) (Var x)]
+    [(Int n) (Int n)]
+    [(Bool b) (Bool b)]
+    [(Void) (Void)]
+    [(Let x e body)
+     (Let x (expose-allocation-exp e) (expose-allocation-exp body))]
+    [(If e1 e2 e3)
+     (If (expose-allocation-exp e1) (expose-allocation-exp e2) (expose-allocation-exp e3))]
+    [(SetBang var rhs)
+     (SetBang var (expose-allocation-exp rhs))]
+    [(GetBang var) (GetBang var)]
+    [(WhileLoop cnd body)
+     (WhileLoop (expose-allocation-exp cnd) (expose-allocation-exp body))]
+    [(Begin es body)
+     (define new-es (for/list ([e es]) (expose-allocation-exp e)))
+     (Begin new-es (expose-allocation-exp body))]
+    [(Prim op es)
+     (Prim op (for/list ([e es]) (expose-allocation-exp e)))]
+    [(Prim 'vector-ref (list e int))
+      (Prim 'vector-ref (list (expose-allocation-exp e) int))]
+    [(Prim 'vector-set! (list e1 int e2))
+       (Prim 'vector-set! (list (expose-allocation-exp e1) int (expose-allocation-exp e2)))]
+    [(HasType (Prim 'vector e) type)
+       (define i 0)
+       (define bytes (* 8 (length e)))
+       (foldr
+        (lambda (elem acc)
+          (let* ([x (string->symbol (string-append "x" (number->string i)))]
+	        [q (Let x (expose-allocation-exp elem) acc)])
+            (set! i (+ 1 i))
+            q))
+        (let ([q (Let '_
+                       (If (Prim '< (list (Prim '+ (list (GlobalValue 'free_ptr) (Int bytes))) (GlobalValue 'fromspace_end)))
+                            (Void)
+                            (Collect bytes))
+                       (Let 'v (Allocate (length e) type)
+                             (foldr
+                               (lambda (elem acc)
+                                 (let* ([x (string->symbol (string-append "x" (number->string i)))]        
+                                        [q (Let '_ (Prim 'vector-set! (list (Var 'v) (Int i) (Var x))) acc)])
+                                   (set! i (+ 1 i))
+                                   q
+                                   ))
+                               (begin (set! i 0) (Var 'v))
+                               e #;(map expose-allocation-exp e))))])
+          (begin (set! i 0)
+                 q))
+          e)]
+    [_ (error "Error: Unidentified Case in expose allocation!")]))
+
+(define (expose-allocation p)
+  (match p  
+    [(Program info e) 
+      (Program info (expose-allocation-exp e))]
+    [_ (error "Error: Unidentified Case in expose allocation")]))
 
 ;; Checks if an expression is atomic (i.e a variable or an integer)
 (define (atom? exp)
