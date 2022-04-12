@@ -9,10 +9,13 @@
 (require "interp-Cvar.rkt")
 (require "interp-Cif.rkt")
 (require "interp-Cwhile.rkt")
+(require "interp-Cvec.rkt")
 (require "utilities.rkt")
 (require "interp.rkt")
 (require "interp-Lif.rkt")
 (require "interp-Lwhile.rkt")
+(require "interp-Lvec.rkt")
+(require "interp-Lvec-prime.rkt")
 (require "priority_queue.rkt")
 (require "multigraph.rkt")
 (provide (all-defined-out))
@@ -198,23 +201,6 @@
     [(Void) #t]
     [_ #f]))
 
-(define (expose-allocation-exp exp)
-  (match exp
-    [(Collect int)
-      ()]
-    [(Allocate int type)
-      ()]
-    [(GlobalValue var)
-      ()]
-    [_ (error "Error: Unidentified Case in expose allocation")]))
-
-
-(define (expose-allocation exp)
-  (match exp  
-    [(Program info es) 
-      (expose-allocation-exp es)]
-    [_ (error "Error: Unidentified Case in expose allocation")]))
-
 ;; Converts the complex expressions to atomic expressions (Refer the grammar on page 27 for atomic expressions)
 ;; by introducing new variables using the Let feature of Racket.
 (define (rco_atom exp)
@@ -275,6 +261,12 @@
      (If (rco_exp cnd) (rco_exp thn) (rco_exp els))]
     [(Let x e body)
      (Let x (rco_exp e) (rco_exp body))]
+    [(Collect es)
+      (Collect (rco_exp es))]
+    [(Allocate es tp)
+      (Allocate (rco_exp es) tp)]
+    [(GlobalValue var)
+      (GlobalValue (rco_exp var))]        
     [_ (error "Error: Unidentified case in rco_exp")]))
          
 (define (test_rco p)
@@ -460,6 +452,9 @@
     [(Let x rhs body)
      (define-values (tail-exp var-list) (explicate-tail body))
      (explicate-assign rhs x tail-exp var-list)]
+
+    [(Allocate int type) 
+      ()]
  
     [_ (error "explicate-tail unhandled case" exp)]))
 
@@ -1330,17 +1325,17 @@
      ;; Uncomment the following passes as you finish them.
      ;;("partial-evaluator" ,partial-lvar ,interp-Lvar)
      ;;("optimized-par-eval" ,opt-par-lvar ,interp-Lvar)
-     ("shrink" ,shrink ,interp-Lwhile)
-     ("uniquify" ,uniquify ,interp-Lwhile)
-     ("uncover-get" ,uncover-get ,interp-Lwhile)
-     ("remove complex opera*" ,remove-complex-opera* ,interp-Lwhile)
-     ("explicate control" ,explicate-control ,interp-Cwhile)
-     ("instruction selection" ,select-instructions ,interp-x86-1)
-     ("uncover live" ,uncover-live-pass ,interp-x86-1)
-     ("build graph" ,build-graph ,interp-x86-1)
+     ("shrink" ,shrink ,interp-Lvec)
+     ;;("uniquify" ,uniquify ,interp-Lvec)
+     ;;("uncover-get" ,uncover-get ,interp-Lvec)
+     ;;("remove complex opera*" ,remove-complex-opera* ,interp-Lvec-prime)
+     ;;("explicate control" ,explicate-control ,interp-Cwhile)
+     ;;("instruction selection" ,select-instructions ,interp-x86-1)
+     ;;("uncover live" ,uncover-live-pass ,interp-x86-1)
+     ;;("build graph" ,build-graph ,interp-x86-1)
         ;  ("assign homes" ,assign-homes ,interp-x86-0)
-     ("allocate-registers" ,allocate-registers ,interp-x86-1)
-     ("patch instructions" ,patch-instructions ,interp-x86-1)
-     ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-1)
+     ;;("allocate-registers" ,allocate-registers ,interp-x86-1)x
+     ;;("patch instructions" ,patch-instructions ,interp-x86-1)
+     ;;("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-1)
      ))
 
