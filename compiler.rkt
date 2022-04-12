@@ -976,6 +976,7 @@
        [_ (error "Unidentified case in uncover-blocks")])]))
 
 
+
 (define (analyze-single-block curr-label live-before-of-successors) 
      (define block (dict-ref bdict curr-label))
      (match block
@@ -1021,6 +1022,7 @@
     ;  (define tsort-order (tsort t-cfg))   ;; list of vertices
     ;  (define label-block-mapping (uncover-blocks tsort-order block-dict))
     (set! bdict block-dict)
+
     (define label-block-mapping (analyze-dataflow t-cfg analyze-single-block (set) set-union))
      (X86Program info bdict)]
      
