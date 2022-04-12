@@ -10,6 +10,10 @@
 (require "interp-Lwhile.rkt")
 (require "type-check-Lif.rkt")
 (require "type-check-Lwhile.rkt")
+(require "interp-Cvec.rkt")
+(require "interp-Lvec.rkt")
+(require "interp-Lvec-prime.rkt")
+(require "type-check-Lvec.rkt")
 (debug-level 1)
 (AST-output-syntax 'concrete-syntax)
 
@@ -31,7 +35,9 @@
 ;; NOTE -> we can replace "var" with "if" and vice-versa for testing different versions of the languages
 
 ;; Replace the #f with the type-checker
-(interp-tests "while" type-check-Lwhile compiler-passes interp-Lwhile "while_test" (tests-for "while"))
+;;(interp-tests "while" type-check-Lwhile compiler-passes interp-Lwhile "while_test" (tests-for "while"))
+
+(interp-tests "vectors" type-check-Lvec compiler-passes interp-Lvec "vectors_test" (tests-for "vectors"))
 ; (interp-tests "aman" type-check-Lwhile compiler-passes interp-Lwhile "aman_test" (tests-for "aman"))
 
 ; (interp-tests "var" #f compiler-passes interp-Lvar "var_test" (tests-for "var"))
