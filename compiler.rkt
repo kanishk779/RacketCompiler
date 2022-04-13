@@ -14,6 +14,7 @@
 (require "interp-Lif.rkt")
 (require "interp-Lwhile.rkt")
 (require "interp-Lvec.rkt")
+(require "interp-Cvec.rkt")
 (require "interp-Lvec-prime.rkt")
 (require "priority_queue.rkt")
 (require "multigraph.rkt")
@@ -226,7 +227,7 @@
 	        [q (Let x (expose-allocation-exp elem) acc)])
             (set! i (+ 1 i))
             q))
-        (let ([q (Let '_
+        (let ([q (Let (gensym '_)
                        (If (Prim '< (list (Prim '+ (list (GlobalValue 'free_ptr) (Int bytes))) (GlobalValue 'fromspace_end)))
                             (Void)
                             (Collect bytes))
@@ -234,7 +235,7 @@
                              (foldr
                                (lambda (elem acc)
                                  (let* ([x (string->symbol (string-append "x" (number->string i)))]        
-                                        [q (Let '_ (Prim 'vector-set! (list (Var 'v) (Int i) (Var x))) acc)])
+                                        [q (Let (gensym '_) (Prim 'vector-set! (list (Var 'v) (Int i) (Var x))) acc)])
                                    (set! i (+ 1 i))
                                    q
                                    ))
@@ -285,7 +286,8 @@
      (define new-name (gensym "tmp"))
      (Let new-name (rco_exp e1)
           (Prim op (list (Var new-name))))]
-    [else (error "Error: Unidentified Case in rco_atom")]))
+    [else (printf "\nProcessing atm- ~a\n" exp)
+          (error "Error: Unidentified Case in rco_atom")]))
     
 ;; Converts complex expression using the above function rco_atom, only if there is a need to
 ;; introduce a new variable, for other cases rco_exp function handles the expression
@@ -306,6 +308,29 @@
     [(WhileLoop cnd body)
      (WhileLoop (rco_exp cnd) (rco_exp body))]
     [(Prim 'read '()) (Prim 'read '())]
+    ; [(Prim 'vector-set! (list (Var 'v) int e2)) 
+    ;   (Prim 'vector-set! (list (Var 'v) int (rco_atom e2)))]
+    [(Prim 'vector-set! (list e1 int e2)) 
+      (cond
+       [(and (not (atom? e1)) (not (atom? e2)))
+        (define new-name-1 (gensym "tmp"))
+        (define new-name-2 (gensym "tmp"))
+        (Let new-name-1 (rco_exp e1)
+             (Let new-name-2 (rco_exp e2)
+                  (Prim 'vector-set! (list (Var new-name-1) int (Var new-name-2)))))]
+       [(atom? e1)
+        (define new-name (gensym "tmp"))
+        (Let new-name (rco_exp e2)
+             (Prim 'vector-set! (list e1 int (Var new-name))))]
+       [(atom? e2)
+        (define new-name (gensym "tmp"))
+        (Let new-name (rco_exp e1)
+             (Prim 'vector-set! (list (Var new-name) int e2)))]
+       )]
+    [(Prim 'vector-ref (list e1 int)) 
+      (define new-name (gensym "tmp"))
+      (Let new-name (rco_exp e1)
+      (Prim 'vector-ref (list (Var new-name) int)))] 
     ;; This will cover,  not, - (unary) 
     [(Prim op (list e1))
      (if (atom? e1)
@@ -315,12 +340,16 @@
     [(Prim op (list e1 e2))
      (if (and (atom? e1) (atom? e2))
          (Prim op (list e1 e2))
-         (rco_atom exp))]
+         (rco_atom exp))]    
     [(If cnd thn els)  ;; We need to check, why the book mentions not to replace the condition with a variable
      (If (rco_exp cnd) (rco_exp thn) (rco_exp els))]
     [(Let x e body)
      (Let x (rco_exp e) (rco_exp body))]
-    [_ (error "Error: Unidentified case in rco_exp")]))
+    [(Collect n) (Collect n)]
+    [(GlobalValue name) (GlobalValue name)]
+    [(Allocate n t) (Allocate n t)]
+    [_  (printf "\nProcessing- ~a\n" exp)
+        (error "Error: Unidentified case in rco_exp")]))
          
 (define (test_rco p)
   (assert "testing rco"
@@ -576,6 +605,18 @@
     [(Let y rhs body)
      (define-values (new-exp new-var-list) (explicate-assign body x cont var-list))
      (explicate-assign rhs y new-exp new-var-list)]
+    [(Collect n)
+     (values (Seq (Collect n) cont)
+      (cons x var-list))]
+    [(Allocate n t)
+     (values (Seq (Assign (Var x) (Allocate n t)) cont) 
+     (cons x var-list))]
+    [(GlobalValue name)
+     (values (Seq (Assign (Var x) (GlobalValue name)) cont) (
+        cons x var-list))]
+    [(Void)
+     (values (Seq (Assign (Var x) (Void)) cont) 
+     (cons x var-list))]
     [_ (error "explicate-assign unhandled case" exp)]))
 
 
@@ -1379,8 +1420,8 @@
      ("uniquify" ,uniquify ,interp-Lvec)
      ("uncover-get" ,uncover-get ,interp-Lvec)
      ("expose-allocation" ,expose-allocation ,interp-Lvec-prime)
-    ;  ("remove complex opera*" ,remove-complex-opera* ,interp-Lwhile)
-    ;  ("explicate control" ,explicate-control ,interp-Cwhile)
+     ("remove complex opera*" ,remove-complex-opera* ,interp-Lvec-prime)
+     ("explicate control" ,explicate-control ,interp-Cvec)
     ;  ("instruction selection" ,select-instructions ,interp-x86-1)
     ;  ("uncover live" ,uncover-live-pass ,interp-x86-1)
     ;  ("build graph" ,build-graph ,interp-x86-1)

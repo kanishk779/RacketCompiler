@@ -12,6 +12,10 @@
 (require "type-check-Lif.rkt")
 (require "type-check-Lwhile.rkt")
 (require "type-check-Lvec.rkt")
+(require "interp-Cvec.rkt")
+(require "type-check-Cvec.rkt")
+(require "interp-Lvec-prime.rkt")
+; (require "type-check-Lvec-prime.rkt")
 (debug-level 1)
 (AST-output-syntax 'concrete-syntax)
 
@@ -34,7 +38,7 @@
 
 ;; Replace the #f with the type-checker
 (interp-tests "vec" type-check-Lvec compiler-passes interp-Lvec "vec_test" (tests-for "vec"))
-; (interp-tests "aman" type-check-Lvec compiler-passes interp-Lvec "aman_test" (tests-for "aman"))
+; (interp-tests "aman" #f compiler-passes interp-Lvec-prime "aman_test" (tests-for "aman"))
 
 ; (interp-tests "var" #f compiler-passes interp-Lvar "var_test" (tests-for "var"))
 
