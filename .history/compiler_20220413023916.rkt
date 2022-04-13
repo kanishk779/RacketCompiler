@@ -9,14 +9,10 @@
 (require "interp-Cvar.rkt")
 (require "interp-Cif.rkt")
 (require "interp-Cwhile.rkt")
-(require "interp-Cvec.rkt")
 (require "utilities.rkt")
 (require "interp.rkt")
 (require "interp-Lif.rkt")
 (require "interp-Lwhile.rkt")
-(require "interp-Lvec.rkt")
-(require "interp-Cvec.rkt")
-(require "interp-Lvec-prime.rkt")
 (require "priority_queue.rkt")
 (require "multigraph.rkt")
 (provide (all-defined-out))
@@ -130,7 +126,6 @@
        (Let new-name rhs ((uniquify-exp new-env) body))]
       [(Prim op es)
        (Prim op (for/list ([e es]) ((uniquify-exp env) e)))]
-      [(HasType ex t) (HasType ((uniquify-exp env) ex) t)]
       [_ (error "Error: Unidentified Case in uniquify-exp")])))
 
 ;; uniquify : R1 -> R1
@@ -158,7 +153,6 @@
      (set-union (foldl set-union (set) (for/list ([e es]) (collect-set! e))) (collect-set! body))]
     [(Prim op es)
      (foldl set-union (set) (for/list ([e es]) (collect-set! e)))]
-    [(HasType ex t) (collect-set! ex)]
     [_ (error "Error: Unidentified Case in collect-set!")]))
 
 ;; Replace the occurences of mutable variables with GetBang
@@ -184,7 +178,6 @@
      (Begin new-es ((uncover-get! vars) body))]
     [(Prim op es)
      (Prim op (for/list ([e es]) ((uncover-get! vars) e)))]
-    [(HasType ex t) (HasType ((uncover-get! vars) ex) t)]
     [_ (error "Error: Unidentified Case in uncover-get!")]))
 
 ;; uncover-get
@@ -193,65 +186,8 @@
     [(Program info e)
      (define vars (collect-set! e))
      (Program info ((uncover-get! vars) e))]
-    [_ (error "Error: Unidentified Case in uncover-get")]))
+    [_ (error "Error: Unidentified Case in uniquify")]))
 
-(define (expose-allocation-exp exp)
-  (match exp
-    [(Var x) (Var x)]
-    [(Int n) (Int n)]
-    [(Bool b) (Bool b)]
-    [(Void) (Void)]
-    [(Let x e body)
-     (Let x (expose-allocation-exp e) (expose-allocation-exp body))]
-    [(If e1 e2 e3)
-     (If (expose-allocation-exp e1) (expose-allocation-exp e2) (expose-allocation-exp e3))]
-    [(SetBang var rhs)
-     (SetBang var (expose-allocation-exp rhs))]
-    [(GetBang var) (GetBang var)]
-    [(WhileLoop cnd body)
-     (WhileLoop (expose-allocation-exp cnd) (expose-allocation-exp body))]
-    [(Begin es body)
-     (define new-es (for/list ([e es]) (expose-allocation-exp e)))
-     (Begin new-es (expose-allocation-exp body))]
-    [(Prim op es)
-     (Prim op (for/list ([e es]) (expose-allocation-exp e)))]
-    [(Prim 'vector-ref (list e int))
-      (Prim 'vector-ref (list (expose-allocation-exp e) int))]
-    [(Prim 'vector-set! (list e1 int e2))
-       (Prim 'vector-set! (list (expose-allocation-exp e1) int (expose-allocation-exp e2)))]
-    [(HasType (Prim 'vector e) type)
-       (define i 0)
-       (define bytes (* 8 (length e)))
-       (foldr
-        (lambda (elem acc)
-          (let* ([x (string->symbol (string-append "x" (number->string i)))]
-	        [q (Let x (expose-allocation-exp elem) acc)])
-            (set! i (+ 1 i))
-            q))
-        (let ([q (Let (gensym '_)
-                       (If (Prim '< (list (Prim '+ (list (GlobalValue 'free_ptr) (Int bytes))) (GlobalValue 'fromspace_end)))
-                            (Void)
-                            (Collect bytes))
-                       (Let 'v (Allocate (length e) type)
-                             (foldr
-                               (lambda (elem acc)
-                                 (let* ([x (string->symbol (string-append "x" (number->string i)))]        
-                                        [q (Let (gensym '_) (Prim 'vector-set! (list (Var 'v) (Int i) (Var x))) acc)])
-                                   (set! i (+ 1 i))
-                                   q
-                                   ))
-                               (begin (set! i 0) (Var 'v))
-                               e #;(map expose-allocation-exp e))))])
-          (begin (set! i 0)
-                 q))
-          e)]
-    [_ (error "Error: Unidentified Case in expose allocation!")]))
-
-(define (expose-allocation p)
-  (match p  
-    [(Program info e) 
-      (Program info (expose-allocation-exp e))]
-    [_ (error "Error: Unidentified Case in expose allocation")]))
 
 ;; Checks if an expression is atomic (i.e a variable or an integer)
 (define (atom? exp)
@@ -287,8 +223,7 @@
      (define new-name (gensym "tmp"))
      (Let new-name (rco_exp e1)
           (Prim op (list (Var new-name))))]
-    [else (printf "\nProcessing atm- ~a\n" exp)
-          (error "Error: Unidentified Case in rco_atom")]))
+    [else (error "Error: Unidentified Case in rco_atom")]))
     
 ;; Converts complex expression using the above function rco_atom, only if there is a need to
 ;; introduce a new variable, for other cases rco_exp function handles the expression
@@ -309,29 +244,6 @@
     [(WhileLoop cnd body)
      (WhileLoop (rco_exp cnd) (rco_exp body))]
     [(Prim 'read '()) (Prim 'read '())]
-    ; [(Prim 'vector-set! (list (Var 'v) int e2)) 
-    ;   (Prim 'vector-set! (list (Var 'v) int (rco_atom e2)))]
-    [(Prim 'vector-set! (list e1 int e2)) 
-      (cond
-       [(and (not (atom? e1)) (not (atom? e2)))
-        (define new-name-1 (gensym "tmp"))
-        (define new-name-2 (gensym "tmp"))
-        (Let new-name-1 (rco_exp e1)
-             (Let new-name-2 (rco_exp e2)
-                  (Prim 'vector-set! (list (Var new-name-1) int (Var new-name-2)))))]
-       [(atom? e1)
-        (define new-name (gensym "tmp"))
-        (Let new-name (rco_exp e2)
-             (Prim 'vector-set! (list e1 int (Var new-name))))]
-       [(atom? e2)
-        (define new-name (gensym "tmp"))
-        (Let new-name (rco_exp e1)
-             (Prim 'vector-set! (list (Var new-name) int e2)))]
-       )]
-    [(Prim 'vector-ref (list e1 int)) 
-      (define new-name (gensym "tmp"))
-      (Let new-name (rco_exp e1)
-      (Prim 'vector-ref (list (Var new-name) int)))] 
     ;; This will cover,  not, - (unary) 
     [(Prim op (list e1))
      (if (atom? e1)
@@ -341,16 +253,18 @@
     [(Prim op (list e1 e2))
      (if (and (atom? e1) (atom? e2))
          (Prim op (list e1 e2))
-         (rco_atom exp))]    
+         (rco_atom exp))]
     [(If cnd thn els)  ;; We need to check, why the book mentions not to replace the condition with a variable
      (If (rco_exp cnd) (rco_exp thn) (rco_exp els))]
     [(Let x e body)
      (Let x (rco_exp e) (rco_exp body))]
-    [(Collect n) (Collect n)]
-    [(GlobalValue name) (GlobalValue name)]
-    [(Allocate n t) (Allocate n t)]
-    [_  (printf "\nProcessing- ~a\n" exp)
-        (error "Error: Unidentified case in rco_exp")]))
+    [(Collect int)
+      (Collect (rco_exp int))]
+    [(Allocate int type)
+      (Allocate (rco_exp int) type)]
+    [(GlobalValue var)
+      (GlobalValue (rco_exp var))]        
+    [_ (error "Error: Unidentified case in rco_exp")]))
          
 (define (test_rco p)
   (assert "testing rco"
@@ -535,9 +449,6 @@
     [(Let x rhs body)
      (define-values (tail-exp var-list) (explicate-tail body))
      (explicate-assign rhs x tail-exp var-list)]
-
-    [(Allocate int type) 
-      ()]
  
     [_ (error "explicate-tail unhandled case" exp)]))
 
@@ -609,18 +520,6 @@
     [(Let y rhs body)
      (define-values (new-exp new-var-list) (explicate-assign body x cont var-list))
      (explicate-assign rhs y new-exp new-var-list)]
-    [(Collect n)
-     (values (Seq (Collect n) cont)
-      (cons x var-list))]
-    [(Allocate n t)
-     (values (Seq (Assign (Var x) (Allocate n t)) cont) 
-     (cons x var-list))]
-    [(GlobalValue name)
-     (values (Seq (Assign (Var x) (GlobalValue name)) cont) (
-        cons x var-list))]
-    [(Void)
-     (values (Seq (Assign (Var x) (Void)) cont) 
-     (cons x var-list))]
     [_ (error "explicate-assign unhandled case" exp)]))
 
 
@@ -1420,18 +1319,17 @@
      ;; Uncomment the following passes as you finish them.
      ;;("partial-evaluator" ,partial-lvar ,interp-Lvar)
      ;;("optimized-par-eval" ,opt-par-lvar ,interp-Lvar)
-     ("shrink" ,shrink ,interp-Lvec)
-     ("uniquify" ,uniquify ,interp-Lvec)
-     ("uncover-get" ,uncover-get ,interp-Lvec)
-     ("expose-allocation" ,expose-allocation ,interp-Lvec-prime)
-     ("remove complex opera*" ,remove-complex-opera* ,interp-Lvec-prime)
-     ("explicate control" ,explicate-control ,interp-Cvec)
-    ;  ("instruction selection" ,select-instructions ,interp-x86-1)
-    ;  ("uncover live" ,uncover-live-pass ,interp-x86-1)
-    ;  ("build graph" ,build-graph ,interp-x86-1)
-    ;     ;  ("assign homes" ,assign-homes ,interp-x86-0)
-    ;  ("allocate-registers" ,allocate-registers ,interp-x86-1)
-    ;  ("patch instructions" ,patch-instructions ,interp-x86-1)
-    ;  ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-1)
+     ("shrink" ,shrink ,interp-Lwhile)
+     ("uniquify" ,uniquify ,interp-Lwhile)
+     ("uncover-get" ,uncover-get ,interp-Lwhile)
+     ("remove complex opera*" ,remove-complex-opera* ,interp-Lwhile)
+     ("explicate control" ,explicate-control ,interp-Cwhile)
+     ("instruction selection" ,select-instructions ,interp-x86-1)
+     ("uncover live" ,uncover-live-pass ,interp-x86-1)
+     ("build graph" ,build-graph ,interp-x86-1)
+        ;  ("assign homes" ,assign-homes ,interp-x86-0)
+     ("allocate-registers" ,allocate-registers ,interp-x86-1)
+     ("patch instructions" ,patch-instructions ,interp-x86-1)
+     ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-1)
      ))
 
