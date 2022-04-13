@@ -2,6 +2,7 @@
 (require racket/set racket/stream)
 (require racket/dict)
 (require racket/fixnum)
+
 (require graph)
 (require data/queue)
 (require "interp-Lint.rkt")
@@ -622,6 +623,13 @@
      (cons x var-list))]
     [_ (error "explicate-assign unhandled case" exp)]))
 
+(define (pick_v ele acc)
+  (cond
+    [(empty? ele) acc]
+    [else (define f (first (string->list (symbol->string (car ele)))))
+          (match f
+            [#\v (pick_v (cdr ele) (append (list (car ele)) acc))]
+            [_ (pick_v (cdr ele) acc)])]))
 
 ;; explicate-control : Lif -> Cif , (We are generating some blocks which are not visited by any other blocks)
 (define (explicate-control p)
@@ -631,6 +639,7 @@
      (define-values (tail-exp var-list) (explicate-tail e))
      (define exp-dict (dict-set basic-blocks 'start tail-exp))
      (define info-dict (dict-set '() 'locals (set->list (list->set var-list))))
+    ;  (define info-dict2 (dict-set '() 'tuples (set->list (list->set var-list))))
      (define new-dict (dict-set info-dict 'cfg (make-graph exp-dict)))
      (CProgram new-dict exp-dict)]
     [_ (error "Error: Unidentified case in explicate-control")]))
@@ -1474,10 +1483,10 @@
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lvec-prime)
      ("explicate control" ,explicate-control ,interp-Cvec)
      ("instruction selection" ,select-instructions ,interp-pseudo-x86-2)
-    ;  ("uncover live" ,uncover-live-pass ,interp-x86-1)
-    ;  ("build graph" ,build-graph ,interp-x86-1)
+     ("uncover live" ,uncover-live-pass ,interp-pseudo-x86-2)
+     ("build graph" ,build-graph ,interp-pseudo-x86-2)
     ;     ;  ("assign homes" ,assign-homes ,interp-x86-0)
-    ;  ("allocate-registers" ,allocate-registers ,interp-x86-1)
+     ("allocate-registers" ,allocate-registers ,interp-x86-2)
     ;  ("patch instructions" ,patch-instructions ,interp-x86-1)
     ;  ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-1)
      ))
