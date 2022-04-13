@@ -222,7 +222,7 @@
     [(HasType (Prim 'vector e) type)
        (define i 0)
        (define bytes (* 8 (length e)))
-       (foldr
+       (foldl
         (lambda (elem acc)
           (let* ([x (string->symbol (string-append "x" (number->string i)))]
 	        [q (Let x (expose-allocation-exp elem) acc)])
@@ -233,7 +233,7 @@
                             (Void)
                             (Collect bytes))
                        (Let 'v (Allocate (length e) type)
-                             (foldr
+                             (foldl
                                (lambda (elem acc)
                                  (let* ([x (string->symbol (string-append "x" (number->string i)))]        
                                         [q (Let (gensym '_) (Prim 'vector-set! (list (Var 'v) (Int i) (Var x))) acc)])
@@ -245,6 +245,8 @@
           (begin (set! i 0)
                  q))
           e)]
+      [(HasType e t)
+       (HasType (expose-allocation-exp e) t)]
     [_ (error "Error: Unidentified Case in expose allocation!")]))
 
 (define (expose-allocation p)
@@ -535,9 +537,6 @@
     [(Let x rhs body)
      (define-values (tail-exp var-list) (explicate-tail body))
      (explicate-assign rhs x tail-exp var-list)]
-
-    [(Allocate int type) 
-      ()]
  
     [_ (error "explicate-tail unhandled case" exp)]))
 
@@ -705,6 +704,28 @@
     ['eq? 'e]
     [_ (error "Error: Unidentified case for op->str")]))
 
+
+(define (list->number ls)
+   (if (not (empty? ls))
+        (if (not (equal? 1 (car ls)))
+          (list->number (cdr ls))
+          (+ (list->number (cdr ls)) (expt 2 (length (cdr ls)))))
+        0))
+
+;; type->binary : Type -> BinaryList
+(define (type->binary tp)
+    (if (not (empty? tp))
+        (if (and (list? (car tp)) (equal? (car (car tp)) 'Vector))
+            (cons 1 (type->binary (cdr tp)))
+            (cons 0 (type->binary (cdr tp))))
+        '()))
+
+(define (get-tag len T)
+  (let* ([type-num (arithmetic-shift (list->number (reverse (type->binary (cdr T)))) 7)]
+         [type-len (bitwise-ior (arithmetic-shift len 1) 1)]
+         [res (bitwise-ior type-num type-len)])
+    res))
+
 ;; select for expression (which are assignment statements, as it is the output of explicate control)
 (define (select-exp exp var)
   (match exp
@@ -740,12 +761,27 @@
      (list
       (Instr 'movq (list (C->X86 a1) var))
       (Instr 'xorq (list (Imm 1) var)))]
+    [(Prim 'vector-ref (list a (Int n)))
+      (list (Instr 'movq (list (C->X86 a) (Reg 'r11))) 
+            (Instr 'movq (list (Deref 'r11 (* 8 (+ 1 n))) var)))]
+    [(Prim 'vector-set! (list atm1 (Int n) atm2))
+    (list (Instr 'movq (list (C->X86 atm1) (Reg 'r11)))
+          (Instr 'movq (list (C->X86 atm2) (Deref 'r11 (* 8 (+ 1 n)))))
+          (Instr 'movq (list (Imm 0) var)))]
     [(Prim op (list a1 a2)) #:when (or (eq? op '>) (eq? op '<) (eq? op '>=) (eq? op '<=) (eq? op 'eq?))
      (list
       (Instr 'cmpq (list (C->X86 a2) (C->X86 a1)))  ;; IMPORTANT -> the order of evaluation is backward for 'cmpq (Wasted a lot of time debugging this)
       (Instr 'set (list (op->str op) (Reg 'al)))
       (Instr 'movzbq (list (Reg 'al) var)))]
-    [_ (error "Error: Unidentified Case in select-exp")]))
+    [(Allocate len T)
+            (let ([tag (get-tag len T)]) ;; need to actually calculate tag using bitwise stuff
+              (list (Instr 'movq (list (Global 'free_ptr) var))
+                    (Instr 'addq (list (Imm (* 8 (add1 len))) (Global 'free_ptr)))
+                    (Instr 'movq (list var (Reg 'r11)))
+                    (Instr 'movq (list (Imm tag) (Deref 'r11 0)))))] ;; deref r11 at 0 always?
+    [(GlobalValue name) (list (Instr 'movq (list (Global name) var)))]
+    [_    (printf "\nMatching ~a\n" exp)
+        (error "Error: Unidentified Case in select-exp")]))
 
 ;; select for statement, this function handles the special case when one of
 ;; the rhs of assignment is same as lhs variable. (We missed one case here for unary subtraction (negation))
@@ -781,6 +817,9 @@
     [(Assign (Var var) es) (select-exp es (Var var))]
     [(Prim 'read (list))
      (list (Callq 'read_int 0))]                ;; Read is now allowed as a statement
+    [(Collect n) (list (Instr 'movq (list (Reg 'r15) (Reg 'rdi)))
+                       (Instr 'movq (list (Imm n) (Reg 'rsi))) ;; seems right
+                       (Callq 'collect 0))]
     [_ (error "Error: Unidentified Case in select-statement")]))
 
 ;; select for tail (Refer the grammar of C_var for tail)
@@ -805,6 +844,14 @@
      (append
       (select-exp es (Reg 'rax))
       (list (Jmp 'conclusion)))]
+    [(HasType tail type) (select-tail tail)]
+    [(IfStmt (Prim 'vector-ref (list v (Int i) 'Integer)) (Goto label1) (Goto label2))
+      (let ([v_ (C->X86 v)])
+      (list
+	      (Instr 'movq (list v_ (Reg 'r11)))
+        (Instr 'cmpq (list (Imm 1) (Deref 'r11 (* 8 (add1 i)))))
+        (JmpIf 'e label1)
+        (Jmp label2)))]
     [_ (error "Error: Unidentified Case in select-tail")]))
 
 ;; Align the frame to be a multiple of 16
@@ -1426,7 +1473,7 @@
      ("expose-allocation" ,expose-allocation ,interp-Lvec-prime)
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lvec-prime)
      ("explicate control" ,explicate-control ,interp-Cvec)
-    ;  ("instruction selection" ,select-instructions ,interp-x86-1)
+     ("instruction selection" ,select-instructions ,interp-pseudo-x86-2)
     ;  ("uncover live" ,uncover-live-pass ,interp-x86-1)
     ;  ("build graph" ,build-graph ,interp-x86-1)
     ;     ;  ("assign homes" ,assign-homes ,interp-x86-0)
