@@ -831,6 +831,13 @@
       (select-tail tail))]
     [(Goto label)
      (list (Jmp label))]
+    [(IfStmt (Prim 'vector-ref (list v (Int i) 'Integer)) (Goto label1) (Goto label2))
+      (let ([v_ (C->X86 v)])
+      (list
+	      (Instr 'movq (list v_ (Reg 'r11)))
+        (Instr 'cmpq (list (Imm 1) (Deref 'r11 (* 8 (add1 i)))))
+        (JmpIf 'e label1)
+        (Jmp label2)))]
     [(IfStmt (Prim op (list e1 e2)) (Goto label1) (Goto label2))
      (list
       (Instr 'cmpq (list (C->X86 e2) (C->X86 e1))) ;; IMPORTANT -> the order of evaluation is backward for 'cmpq
@@ -845,13 +852,7 @@
       (select-exp es (Reg 'rax))
       (list (Jmp 'conclusion)))]
     [(HasType tail type) (select-tail tail)]
-    [(IfStmt (Prim 'vector-ref (list v (Int i) 'Integer)) (Goto label1) (Goto label2))
-      (let ([v_ (C->X86 v)])
-      (list
-	      (Instr 'movq (list v_ (Reg 'r11)))
-        (Instr 'cmpq (list (Imm 1) (Deref 'r11 (* 8 (add1 i)))))
-        (JmpIf 'e label1)
-        (Jmp label2)))]
+    
     [_ (error "Error: Unidentified Case in select-tail")]))
 
 ;; Align the frame to be a multiple of 16
