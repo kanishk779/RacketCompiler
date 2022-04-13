@@ -214,12 +214,14 @@
     [(Begin es body)
      (define new-es (for/list ([e es]) (expose-allocation-exp e)))
      (Begin new-es (expose-allocation-exp body))]
-    [(Prim op es)
-     (Prim op (for/list ([e es]) (expose-allocation-exp e)))]
     [(Prim 'vector-ref (list e int))
       (Prim 'vector-ref (list (expose-allocation-exp e) int))]
     [(Prim 'vector-set! (list e1 int e2))
        (Prim 'vector-set! (list (expose-allocation-exp e1) int (expose-allocation-exp e2)))]
+    ; [(Prim 'vector-length e)
+    ;   (Prim 'vector-length (expose-allocation-exp e))]
+    [(Prim op es)
+     (Prim op (for/list ([e es]) (expose-allocation-exp e)))]
     [(HasType (Prim 'vector e) type)
        (define i 0)
        (define bytes (* 8 (length e)))
@@ -626,10 +628,11 @@
 (define (pick_v ele acc)
   (cond
     [(empty? ele) acc]
-    [else (define f (first (string->list (symbol->string (car ele)))))
-          (match f
-            [#\v (pick_v (cdr ele) (append (list (car ele)) acc))]
-            [_ (pick_v (cdr ele) acc)])]))
+    [(symbol? (car ele)) (define f (first (string->list (symbol->string (car ele)))))
+                          (match f
+                            [#\v (pick_v (cdr ele) (append (list (car ele)) acc))]
+                            [_ (pick_v (cdr ele) acc)])]
+    [else (pick_v (cdr ele) acc)]))
 
 ;; explicate-control : Lif -> Cif , (We are generating some blocks which are not visited by any other blocks)
 (define (explicate-control p)
@@ -886,6 +889,7 @@
 (define (select-instructions p)
   (match p
     [(CProgram info exp-dict)
+        (printf "\nInfo- ~a\n" info)
        (define new-info (dict-set info 'stack-size (give-st-size (cdr (car info)))))
        (X86Program new-info (generate-blocks exp-dict))]
     [_ (error "Error: Unidentified Case in select-instructions")]))
@@ -1371,6 +1375,7 @@
             (printf "Printing the color-list :- \n")
             (printf "~a\n" color-list)
             (define spilled-vars (let ([x (- (- (length color-list) 1) (length register-list))]) (if (> 0 x) 0 x))) 
+            (printf "Spilled vars- ~a\n" spilled-vars)
             (define new-reg-list (add-stack-locations register-list spilled-vars))
             (define colourreg (generate-colourreg '() 0 new-reg-list))
                     
@@ -1408,6 +1413,17 @@
      (list
       (Instr 'movq (list (Imm n) (Reg 'rax)))
       (Instr 'mvzbq (list arg1 (Reg 'rax))))]
+    [(Instr op (list e1 e2)) 
+     (match (list e1 e2)
+       [(list (Global name) (Deref a b)) (list (Instr 'movq (list e1 (Reg 'rax)))
+                                               (Instr op (list (Reg 'rax) e2)))]
+       [(list (Deref a b) (Deref c d)) (list (Instr 'movq (list e1 (Reg 'rax)))
+                                             (Instr op (list (Reg 'rax) e2)))]
+       [(list (Global name) (Global name1)) (list (Instr 'movq (list e1 (Reg 'rax)))
+                                                  (Instr op (list (Reg 'rax) e2)))]
+       [(list (Deref a b) (Global name)) (list (Instr 'movq (list e1 (Reg 'rax)))
+                                               (Instr op (list (Reg 'rax) e2)))]
+       [(list x y) (list (Instr op (list e1 e2)))])]
     [_ (list instr)]))
 
 ;; changes movq and addq with two stack locations as the arguments, since in X86 only 1 memory reference
@@ -1486,9 +1502,9 @@
      ("instruction selection" ,select-instructions ,interp-pseudo-x86-2)
      ("uncover live" ,uncover-live-pass ,interp-pseudo-x86-2)
      ("build graph" ,build-graph ,interp-pseudo-x86-2)
-    ;     ;  ("assign homes" ,assign-homes ,interp-x86-0)
-     ("allocate-registers" ,allocate-registers ,interp-x86-2)
-    ;  ("patch instructions" ,patch-instructions ,interp-x86-1)
+    ; ;     ;  ("assign homes" ,assign-homes ,interp-x86-0)
+     ("allocate-registers" ,allocate-registers ,interp-pseudo-x86-2)
+     ("patch instructions" ,patch-instructions ,interp-pseudo-x86-2)
     ;  ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-1)
      ))
 
