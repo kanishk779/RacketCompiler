@@ -40,13 +40,13 @@
 ;; NOTE -> we can replace "var" with "if" and vice-versa for testing different versions of the languages
 
 ;; Replace the #f with the type-checker
-(interp-tests "vec" type-check-Lvec compiler-passes interp-Lvec "vec_test" (tests-for "vec"))
-; (interp-tests "aman" #f compiler-passes interp-Lvec-prime "aman_test" (tests-for "aman"))
+; (interp-tests "vec" type-check-Lvec compiler-passes interp-Lvec "vec_test" (tests-for "vec"))
+; (interp-tests "aman" type-check-Lvec compiler-passes interp-Lvec "aman_test" (tests-for "aman"))
 
 ; (interp-tests "var" #f compiler-passes interp-Lvar "var_test" (tests-for "var"))
 
 
 
 ;; Uncomment the following when all the passes are complete to test the final x86 code.
-;;(compiler-tests "var" type-check-Lif compiler-passes "var_test" (tests-for "var"))
+(compiler-tests "vec" type-check-Lvec compiler-passes "vec_test" (tests-for "vec"))
 

@@ -8,6 +8,7 @@
 (require "interp-Lint.rkt")
 (require "interp-Lvar.rkt")
 (require "interp-Cvar.rkt")
+(require "type-check-Cvec.rkt")
 (require "interp-Cif.rkt")
 (require "interp-Cwhile.rkt")
 (require "interp-Cvec.rkt")
@@ -21,7 +22,7 @@
 (require "priority_queue.rkt")
 (require "multigraph.rkt")
 (provide (all-defined-out))
-(AST-output-syntax 'concrete-syntax)
+; (AST-output-syntax 'abstract-synta)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Lint examples
@@ -99,7 +100,7 @@
 ;; Shrink : L_if -> L_if
 (define (shrink p)
   (match p
-    [(Program info e) (Program info (shrink-exp e))]
+    [(Program info e)   (Program info (shrink-exp e))]
     [_ (error "Error : Unidentified Case in shrink")]))
 
 ;; The dictionary (i.e env) stores the mapping between the original variable names and the new corresponding variable name that we create using gensym function.
@@ -197,6 +198,7 @@
     [_ (error "Error: Unidentified Case in uncover-get")]))
 
 (define (expose-allocation-exp exp)
+    ; (printf "\nWorking on ~a\n" exp)
   (match exp
     [(Var x) (Var x)]
     [(Int n) (Int n)]
@@ -218,8 +220,8 @@
       (Prim 'vector-ref (list (expose-allocation-exp e) int))]
     [(Prim 'vector-set! (list e1 int e2))
        (Prim 'vector-set! (list (expose-allocation-exp e1) int (expose-allocation-exp e2)))]
-    ; [(Prim 'vector-length e)
-    ;   (Prim 'vector-length (expose-allocation-exp e))]
+    [(Prim 'vector-length (list e))
+      (Prim 'vector-length (list (expose-allocation-exp e)))]
     [(Prim op es)
      (Prim op (for/list ([e es]) (expose-allocation-exp e)))]
     [(HasType (Prim 'vector e) type)
@@ -239,11 +241,11 @@
                              (foldl
                                (lambda (elem acc)
                                  (let* ([x (string->symbol (string-append "x" (number->string i)))]        
-                                        [q (Let (gensym '_) (Prim 'vector-set! (list (Var 'v) (Int i) (Var x))) acc)])
+                                        [q (Let (gensym '_) (Prim 'vector-set! (list (HasType (Var 'v) type) (Int i) (Var x))) acc)])
                                    (set! i (+ 1 i))
                                    q
                                    ))
-                               (begin (set! i 0) (Var 'v))
+                               (begin (set! i 0) (HasType (Var 'v) type))
                                e #;(map expose-allocation-exp e))))])
           (begin (set! i 0)
                  q))
@@ -292,7 +294,7 @@
      (define new-name (gensym "tmp"))
      (Let new-name (rco_exp e1)
           (Prim op (list (Var new-name))))]
-    [else (printf "\nProcessing atm- ~a\n" exp)
+    [else ;(printf "\nProcessing atm- ~a\n" exp)
           (error "Error: Unidentified Case in rco_atom")]))
     
 ;; Converts complex expression using the above function rco_atom, only if there is a need to
@@ -336,7 +338,11 @@
     [(Prim 'vector-ref (list e1 int)) 
       (define new-name (gensym "tmp"))
       (Let new-name (rco_exp e1)
-      (Prim 'vector-ref (list (Var new-name) int)))] 
+      (Prim 'vector-ref (list (Var new-name) int)))]
+    [(Prim 'vector-length (list e)) 
+      (define new-name (gensym "tmp"))
+      (Let new-name (rco_exp e)
+      (Prim 'vector-length (list (Var new-name))))] 
     ;; This will cover,  not, - (unary) 
     [(Prim op (list e1))
      (if (atom? e1)
@@ -354,7 +360,9 @@
     [(Collect n) (Collect n)]
     [(GlobalValue name) (GlobalValue name)]
     [(Allocate n t) (Allocate n t)]
-    [_  (printf "\nProcessing- ~a\n" exp)
+    [(HasType e t)
+     (HasType (rco_exp e) t)]
+    [_  ;(printf "\nProcessing- ~a\n" exp)
         (error "Error: Unidentified case in rco_exp")]))
          
 (define (test_rco p)
@@ -409,12 +417,12 @@
     [(Void) (values cont (list))]
     [(GetBang var) (values cont (list))]
     [(SetBang var rhs)
-     (printf "setbang in effect\n")
+     ;(printf "setbang in effect\n")
      (explicate-assign rhs var cont (list))]
     [(Prim 'read es)                              ;; Read can be statement now
      (values (Seq (Prim 'read es) cont) (list))]
     [exp-list #:when (list? exp-list)
-     (printf "exp is a list, with length : ~a\n" (length exp))
+     ;(printf "exp is a list, with length : ~a\n" (length exp))
      (explicate-effect-list exp cont)]
     [(If cnd thn els) ;; Recursively call on then and else block
      (define-values (thn^ var-thn) (explicate-effect thn cont))
@@ -427,12 +435,12 @@
      (define-values (body^ var-lst) (explicate-effect body cont))
      (explicate-assign rhs x body^ var-lst)]
     [(Begin es body)
-     (printf "Begin in effect position\n")
+     ;(printf "Begin in effect position\n")
      (define-values (body^ var-list) (explicate-effect body cont))
      (define-values (stmt var-lst) (explicate-effect-list es body^))
      (values stmt (append var-list var-lst))]
     [(WhileLoop cnd body)
-     (printf "while loop in effect position \n")
+     ;(printf "while loop in effect position \n")
      (define loop-name (gensym 'loop))
      (define-values (body^ var-list) (explicate-effect body (Goto loop-name)))
      (define body-block (create-block body^))
@@ -517,7 +525,7 @@
      (values
       (Return (Var var)) (list))]
     [(Begin es body)
-     (printf "Is es a list : ~a\n" (list? es))
+     ;(printf "Is es a list : ~a\n" (list? es))
      (define-values (tail-exp var-list) (explicate-tail body))
      (define-values (new-tail var-lst) (explicate-effect es tail-exp)) ;; explicate-effect takes a list of expression and cont stmts, returns a tail-expr
      (values new-tail (append var-list var-lst))]
@@ -540,13 +548,20 @@
     [(Let x rhs body)
      (define-values (tail-exp var-list) (explicate-tail body))
      (explicate-assign rhs x tail-exp var-list)]
+    [(HasType e t) (explicate-tail e)]
  
     [_ (error "explicate-tail unhandled case" exp)]))
 
 ;; This function is for the creating assignment statement in C_var language (Refer the grammar on Page 25)
+(define vector-list '())
 (define (explicate-assign exp x cont var-list)
   (match exp
     [(Var var)
+      ; (printf "\n x is ~a\n" x)
+      ; (printf "\n list is ~a\n" vector-list)
+      ; (printf "\n var is ~a\n" var)
+      (cond 
+        [(member x vector-list) (set! vector-list (append vector-list (list var)))])
      (values
       (Seq
        (Assign (Var x) (Var var)) cont)
@@ -623,6 +638,9 @@
     [(Void)
      (values (Seq (Assign (Var x) (Void)) cont) 
      (cons x var-list))]
+    [(HasType v t)  (set! vector-list (append vector-list (list v)))
+                    (set! vector-list (append vector-list (list x)))
+                    (explicate-assign v x cont var-list)]
     [_ (error "explicate-assign unhandled case" exp)]))
 
 (define (pick_v ele acc)
@@ -634,18 +652,52 @@
                             [_ (pick_v (cdr ele) acc)])]
     [else (pick_v (cdr ele) acc)]))
 
+(define (make-vector-list veclist varlist)
+    (if (empty? veclist)
+        (list)
+        (if (member (car veclist) varlist)
+            (cons (car veclist) (make-vector-list (cdr veclist) varlist))
+            (make-vector-list (cdr veclist) varlist))))
+
 ;; explicate-control : Lif -> Cif , (We are generating some blocks which are not visited by any other blocks)
 (define (explicate-control p)
+  (set! vector-list '())
   (match p
     [(Program info e)
      (set! basic-blocks (list))  ;; Need to clear the blocks of previous programs (since it is a global variable)
      (define-values (tail-exp var-list) (explicate-tail e))
      (define exp-dict (dict-set basic-blocks 'start tail-exp))
      (define info-dict (dict-set '() 'locals (set->list (list->set var-list))))
+     (printf "\nvector-list ~a\n" vector-list)
+     (set! vector-list (make-vector-list (set->list (list->set vector-list)) var-list))
+    ;  (printf "\nvector-list ~a ~a ~a\n" (car (cdr vector-list)) (car vector-list) (eq? (car vector-list) (car (cdr vector-list))))
+    (printf "\nvector-list ~a\n" vector-list)
     ;  (define info-dict2 (dict-set '() 'tuples (set->list (list->set var-list))))
      (define new-dict (dict-set info-dict 'cfg (make-graph exp-dict)))
      (CProgram new-dict exp-dict)]
+    ;  (type-check-Cvec (CProgram new-dict exp-dict))
     [_ (error "Error: Unidentified case in explicate-control")]))
+
+
+(define (uncover-locals-tail e)
+  (match e
+   [(Assign (Var v) (HasType e t))
+    (list (cons v t))]
+   [(Seq s t)
+    (append (uncover-locals-tail s) (uncover-locals-tail t))]
+   [_ (list)])
+  )
+
+(define (uncover-locals-helper es)
+  (append* (for/list ([l es])
+		     (uncover-locals-tail (cdr l)))))
+
+;; uncover-locals : C2 -> C2
+(define (uncover-locals p)
+  (match p
+    [(CProgram info e)
+     (CProgram (dict-set info 'locals (uncover-locals-helper e)) e)]))
+
 
 ;; Remove empty edges
 (define (remove-empty-edge edges)
@@ -776,6 +828,11 @@
     [(Prim 'vector-ref (list a (Int n)))
       (list (Instr 'movq (list (C->X86 a) (Reg 'r11))) 
             (Instr 'movq (list (Deref 'r11 (* 8 (+ 1 n))) var)))]
+    [(Prim 'vector-length (list a))
+      (list (Instr 'movq (list (C->X86 a) (Reg 'r11))) 
+            (Instr 'movq (list (Deref 'r11 0) var))
+            (Instr 'sarq (list (Imm 1) var))
+            (Instr 'andq (list (Imm 63) var)))]
     [(Prim 'vector-set! (list atm1 (Int n) atm2))
     (list (Instr 'movq (list (C->X86 atm1) (Reg 'r11)))
           (Instr 'movq (list (C->X86 atm2) (Deref 'r11 (* 8 (+ 1 n)))))
@@ -792,7 +849,7 @@
                     (Instr 'movq (list var (Reg 'r11)))
                     (Instr 'movq (list (Imm tag) (Deref 'r11 0)))))] ;; deref r11 at 0 always?
     [(GlobalValue name) (list (Instr 'movq (list (Global name) var)))]
-    [_    (printf "\nMatching ~a\n" exp)
+    [_    ;(printf "\nMatching ~a\n" exp)
         (error "Error: Unidentified Case in select-exp")]))
 
 ;; select for statement, this function handles the special case when one of
@@ -1096,6 +1153,8 @@
      (set b)]
     [(JmpIf cc label)
      (set)]
+    [(Callq 'collect arity)
+     (list->set vector-list)]   ;; Tuple type variables are to be spilled during call to collector - Pg 111
     [(Callq label arity)
      (list->set caller-saved)]  ;; All the caller-saved registers are in the write set as mentioned on Page 36.
     [(Retq) (set)]
@@ -1107,7 +1166,7 @@
 
 ;; Takes a X86 instruction and live-before set and gives the live after set
 (define (live-before-op instr live-before)
-  (printf "Live before is a ~a\n" live-before)
+  ;(printf "Live before is a ~a\n" live-before)
   (set-union (set-subtract (list->set live-before) (write-set instr)) (read-set instr)))
   
 ;; Takes a list of instructions and compute the live after sets, (list of sets)
@@ -1291,6 +1350,11 @@
                     (dsatur q new-colours new-sat graph)]
                 [else (dsatur q colours saturation graph)])]))
 
+(define spill-st (list))
+(define spill-root (list))
+; (define register-list (list (Reg 'rbx)))
+(define register-list (list (Reg 'rbx) (Reg 'r12) (Reg 'r13) (Reg 'r14)))
+
 (define (add-stack-locations register-list num)
     (cond
         [(<= num 0) register-list]
@@ -1302,30 +1366,38 @@
         [_ (generate-colourreg (append mapping (list (cons num (car reg-list)))) (+ num 1) (cdr reg-list))]))
 
 ;; Replace a single variable with stack-location or register
-(define (allocate-handle-arg arg mapping offset)
+(define (allocate-handle-arg arg colouring colourreg offset)
   (match arg
     [(Var x)
-     (match (dict-ref mapping (Var x))
-       [(Reg r) (Reg r)]
-       [(Deref 'rbp num) (Deref 'rbp (- num offset))])]
+        (define col (dict-ref colouring (Var x)))
+        (cond
+            [(< col (length register-list)) (list-ref register-list col)]
+            [(member x vector-list) 
+                (define loc (* 8 (+ 1 (- col (+ 1 (length register-list))))))
+                (set! spill-root (append spill-root (list loc)))
+                (Deref 'r15 loc)]
+            [else 
+                (define loc (* -8 (- col (+ 1 (length register-list)))))
+                (set! spill-st (append spill-st (list loc)))
+                (Deref 'rbp (- loc 32))])]
     [_ arg]))
 
 ;; Replaces the variables with stack location with respect to rbp (base-pointer)
-(define (allocate-single-instr instr mapping offset)
+(define (allocate-single-instr instr colouring colourreg offset)
   (match instr
     [(Instr op (list a1 a2))  ;; Handles movq and addq
-     (Instr op (list (allocate-handle-arg a1 mapping offset) (allocate-handle-arg a2 mapping offset)))]
+     (Instr op (list (allocate-handle-arg a1 colouring colourreg offset) (allocate-handle-arg a2 colouring colourreg offset)))]
     [(Instr 'popq (list a))   ;; Handles popq
      instr]
     [(Instr op (list a))      ;; Handles pushq and negq
-     (Instr op (list (allocate-handle-arg a mapping offset)))]
+     (Instr op (list (allocate-handle-arg a colouring colourreg offset)))]
     [_ instr]))               ;; Handles callq, Jmp, Retq
 
 ;; Replaces each variable with the register or stack location
-(define (allocate-register-helper instr mapping offset)
+(define (allocate-register-helper instr colouring colourreg offset)
   (if (null? instr)
       (list)
-      (cons (allocate-single-instr (car instr) mapping offset) (allocate-register-helper (cdr instr) mapping offset))))
+      (cons (allocate-single-instr (car instr) colouring colourreg offset) (allocate-register-helper (cdr instr) colouring colourreg offset))))
 
 ;; create a mapping for every variable in our program to a Stack-location or a Register
 (define (allocate-create-mapping nodes colouring colorReg)
@@ -1348,9 +1420,9 @@
        [_ (used-callee (cdr allocation))])]))
 
 ;; Handles each of the block and generates a new corresponding block
-(define (new-allocation block mapping offset)
+(define (new-allocation block colouring colourreg offset)
   (match block
-    [(Block info instrs) (Block info (allocate-register-helper instrs mapping offset))]
+    [(Block info instrs) (Block info (allocate-register-helper instrs colouring colourreg offset))]
     [_ (error "Error")]))
 
 ;; Replaces variable names with registers or stack locations
@@ -1370,7 +1442,6 @@
             (define colours (make-colors nodes '()))
             
             (define colouring (dsatur q colours saturation graph))
-            (define register-list (list (Reg 'rbx) (Reg 'r12) (Reg 'r13) (Reg 'r14)))
             (define color-list (remove-duplicates (dict-values colouring)))
             (printf "Printing the color-list :- \n")
             (printf "~a\n" color-list)
@@ -1380,15 +1451,17 @@
             (define colourreg (generate-colourreg '() 0 new-reg-list))
                     
             (define mapping (allocate-create-mapping nodes colouring colourreg))
-            (printf "Printing the mapping :- \n")
-            (printf "~a\n" mapping)
+            ; (printf "Printing the mapping :- \n")
+            ; (printf "~a\n" mapping)
             (define callee-reg (remove-duplicates (used-callee (dict-values mapping))))
             (define n-info (dict-set info 'used_callee callee-reg))
             (define new-info (dict-set n-info 'spilled-vars spilled-vars))
-            (define new-exp (for/list ([block-pair exp]) (cons (car block-pair) (new-allocation (dict-ref exp (car block-pair)) mapping (* 8 (length callee-reg))))))
+            (set! spill-root (set->list (list->set spill-root)))
+            (define n-new-info (dict-set new-info 'num-root-spills (length spill-root)))
+            (define new-exp (for/list ([block-pair exp]) (cons (car block-pair) (new-allocation (dict-ref exp (car block-pair)) colouring colourreg (* 8 (length callee-reg))))))
             ;(define new-block (Block block-info (allocate-register-helper instr mapping (* 8 (length callee-reg)))))
             ;(define new-exp (dict-set '() 'start new-block))
-            (X86Program new-info new-exp)]
+            (X86Program n-new-info new-exp)]
         [_ (error "Error: Unidentified Case while matching program in allocate registers pass")]))
 
 
@@ -1405,6 +1478,20 @@
        [else (list
               (Instr 'movq (list (Deref 'rbp int1) (Reg 'rax)))
               (Instr op (list (Reg 'rax) (Deref 'rbp int2))))])]
+    [(Instr op (list (Deref 'r15 int1) (Deref 'r15 int2)))
+     (cond
+       [(equal? int1 int2) (list)]
+       [else (list
+              (Instr 'movq (list (Deref 'r15 int1) (Reg 'rax)))
+              (Instr op (list (Reg 'rax) (Deref 'r15 int2))))])]
+    [(Instr op (list (Deref 'r15 int1) (Deref 'rbp int2)))
+        (list
+            (Instr 'movq (list (Deref 'r15 int1) (Reg 'rax)))
+            (Instr op (list (Reg 'rax) (Deref 'rbp int2))))]
+    [(Instr op (list (Deref 'rbp int1) (Deref 'r15 int2)))
+        (list
+            (Instr 'movq (list (Deref 'rbp int1) (Reg 'rax)))
+            (Instr op (list (Reg 'rax) (Deref 'r15 int2))))]
     [(Instr 'cmpq (list  arg1 (Imm n)))
      (list
       (Instr 'movq (list (Imm n) (Reg 'rax)))
@@ -1449,9 +1536,10 @@
 
 
 ;; generates the Conclusion
-(define (conclusion-gen stack-size used-callee)
+(define (conclusion-gen stack-size used-callee roots)
   (append
    (list
+    (Instr 'subq (list (Imm (* 8 roots)) (Reg 'r15)))
     (Instr 'addq (list (Imm stack-size) (Reg 'rsp))))
    (for/list ([reg (reverse used-callee)]) (Instr 'popq (list reg)))  ;; POP in the reverse direction, the register which was pushed last should be popped first
    (list
@@ -1460,7 +1548,7 @@
   )
 
 ;; generates Main block
-(define (main-gen stack-size used-callee)
+(define (main-gen stack-size used-callee roots)
   (append
    (list
     (Instr 'pushq (list (Reg 'rbp)))
@@ -1468,18 +1556,26 @@
    (for/list ([reg used-callee]) (Instr 'pushq (list reg)))
    (list
     (Instr 'subq (list (Imm stack-size) (Reg 'rsp)))
-    (Jmp 'start))))
+    (Instr 'movq (list (Imm 16384) (Reg 'rdi)))
+    (Instr 'movq (list (Imm 16384) (Reg 'rsi)))
+    (Callq 'initialize 0)
+    (Instr 'movq (list (Global 'rootstack_begin) (Reg 'r15))))
+    (for/list ([i roots]) (Instr 'movq (list (Imm 0) (Deref 'r15 (* i 8)))))
+    (list
+        (Instr 'addq (list (Imm (* 8 roots)) (Reg 'r15)))
+        (Jmp 'start))))
 
 
 ;; prelude-and-conclusion : x86 -> x86
 (define (prelude-and-conclusion p)
   (match p
     [(X86Program info exp) 
+    (define roots (dict-ref info 'num-root-spills))
     (define spilled (dict-ref info 'spilled-vars))
     (define used-callee (dict-ref info 'used_callee))
     (define st-size (- (align-16 (+ spilled (length used-callee))) (* 8 (length used-callee)))) ;; Refer the formula on Page 50
-    (define main-block (Block '() (main-gen st-size used-callee)))
-    (define conclusion-block (Block '() (conclusion-gen st-size used-callee)))
+    (define main-block (Block '() (main-gen st-size used-callee roots)))
+    (define conclusion-block (Block '() (conclusion-gen st-size used-callee roots)))
     (define new-exp (dict-set exp 'main main-block))
     (define final-exp (dict-set new-exp 'conclusion conclusion-block))
     (X86Program info final-exp)]
@@ -1499,12 +1595,13 @@
      ("expose-allocation" ,expose-allocation ,interp-Lvec-prime)
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lvec-prime)
      ("explicate control" ,explicate-control ,interp-Cvec)
+     ("uncover locals" ,uncover-locals ,interp-Cvec)
      ("instruction selection" ,select-instructions ,interp-pseudo-x86-2)
      ("uncover live" ,uncover-live-pass ,interp-pseudo-x86-2)
      ("build graph" ,build-graph ,interp-pseudo-x86-2)
     ; ;     ;  ("assign homes" ,assign-homes ,interp-x86-0)
      ("allocate-registers" ,allocate-registers ,interp-pseudo-x86-2)
-     ("patch instructions" ,patch-instructions ,interp-pseudo-x86-2)
-    ;  ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-1)
+     ("patch instructions" ,patch-instructions ,interp-x86-2)
+     ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-2)
      ))
 
