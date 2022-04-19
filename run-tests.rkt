@@ -40,7 +40,7 @@
 ;; NOTE -> we can replace "var" with "if" and vice-versa for testing different versions of the languages
 
 ;; Replace the #f with the type-checker
-; (interp-tests "vec" type-check-Lvec compiler-passes interp-Lvec "vec_test" (tests-for "vec"))
+;(interp-tests "vec" type-check-Lvec compiler-passes interp-Lvec "vec_test" (tests-for "vec"))
 ; (interp-tests "aman" type-check-Lvec compiler-passes interp-Lvec "aman_test" (tests-for "aman"))
 
 ; (interp-tests "var" #f compiler-passes interp-Lvar "var_test" (tests-for "var"))

@@ -247,8 +247,8 @@
                                    ))
                                (begin (set! i 0) (HasType (Var 'v) type))
                                e #;(map expose-allocation-exp e))))])
-          (begin (set! i 0)
-                 q))
+          (begin (set! i 0) q)
+          )
           e)]
       [(HasType e t)
        (HasType (expose-allocation-exp e) t)]
@@ -557,9 +557,6 @@
 (define (explicate-assign exp x cont var-list)
   (match exp
     [(Var var)
-      ; (printf "\n x is ~a\n" x)
-      ; (printf "\n list is ~a\n" vector-list)
-      ; (printf "\n var is ~a\n" var)
       (cond 
         [(member x vector-list) (set! vector-list (append vector-list (list var)))])
      (values
@@ -643,6 +640,7 @@
                     (explicate-assign v x cont var-list)]
     [_ (error "explicate-assign unhandled case" exp)]))
 
+;; What is this used for??
 (define (pick_v ele acc)
   (cond
     [(empty? ele) acc]
@@ -652,6 +650,7 @@
                             [_ (pick_v (cdr ele) acc)])]
     [else (pick_v (cdr ele) acc)]))
 
+;; What is this used for ??
 (define (make-vector-list veclist varlist)
     (if (empty? veclist)
         (list)
@@ -668,14 +667,10 @@
      (define-values (tail-exp var-list) (explicate-tail e))
      (define exp-dict (dict-set basic-blocks 'start tail-exp))
      (define info-dict (dict-set '() 'locals (set->list (list->set var-list))))
-     (printf "\nvector-list ~a\n" vector-list)
      (set! vector-list (make-vector-list (set->list (list->set vector-list)) var-list))
-    ;  (printf "\nvector-list ~a ~a ~a\n" (car (cdr vector-list)) (car vector-list) (eq? (car vector-list) (car (cdr vector-list))))
-    (printf "\nvector-list ~a\n" vector-list)
-    ;  (define info-dict2 (dict-set '() 'tuples (set->list (list->set var-list))))
+     (printf "\nvector-list ~a\n" vector-list)
      (define new-dict (dict-set info-dict 'cfg (make-graph exp-dict)))
      (CProgram new-dict exp-dict)]
-    ;  (type-check-Cvec (CProgram new-dict exp-dict))
     [_ (error "Error: Unidentified case in explicate-control")]))
 
 
@@ -1599,7 +1594,7 @@
      ("instruction selection" ,select-instructions ,interp-pseudo-x86-2)
      ("uncover live" ,uncover-live-pass ,interp-pseudo-x86-2)
      ("build graph" ,build-graph ,interp-pseudo-x86-2)
-    ; ;     ;  ("assign homes" ,assign-homes ,interp-x86-0)
+     ;  ("assign homes" ,assign-homes ,interp-x86-0)
      ("allocate-registers" ,allocate-registers ,interp-pseudo-x86-2)
      ("patch instructions" ,patch-instructions ,interp-x86-2)
      ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-2)

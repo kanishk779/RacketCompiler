@@ -1,0 +1,31 @@
+;(+ (read) 25)
+(+
+    (let ([sum (vector-ref (vector 2 3 4 ) 0)])
+        (begin
+            (while (< sum 10)
+                (begin
+                    (set! sum (+ sum 3))
+                )
+            )
+            (- sum 3)
+        )
+    )
+    (if (< 10 20)
+        (let ([i 5])
+            (let ([v1 (vector 0 1)])
+            (begin
+                (while (> i 0)
+                    (begin 
+                        (if (> i 2) 
+                            (vector-set! v1 0 (+ (vector-ref v1 0) i)) 
+                            (vector-set! v1 0 (vector-ref v1 0))
+                        )
+                        (set! i (- i 1))
+                    )
+                )
+                (vector-ref v1 0)
+            ))
+        )
+        (+ (read) 10)
+    )
+)
