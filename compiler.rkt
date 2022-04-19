@@ -432,6 +432,10 @@
      (define-values (stmt var-lst) (explicate-pred cnd thn-block els-block))
      (values stmt (append var-lst var-thn els-thn))]
     [(Let x rhs body)
+    (printf "\nExplicate at ~a\n" exp)
+        ; (match body
+        ;     [(Prim 'vector-set! (list atm1 (Int n) atm2)) (printf "\nExplicate at ~a\n" exp)]
+        ;     [_ (printf "")])
      (define-values (body^ var-lst) (explicate-effect body cont))
      (explicate-assign rhs x body^ var-lst)]
     [(Begin es body)
@@ -450,13 +454,18 @@
      (values
       (Goto loop-name)
       (append var-lst var-list))]
-
+    [(Prim 'vector-set! es)
+    (printf "reached our boi")
+     (values
+      (Seq
+       (Assign (Var (gensym '_)) (Prim 'vector-set! es)) cont)
+      (list))]
     [(Prim op es)
      (values cont (list))]
     
     [_ (error "Error: Unidentified Case in explicate-effect" exp)]))
      
-     
+(define vector-list '())     
 ;; explicate-pred for handling the if statements
 (define (explicate-pred cnd thn-block els-block)
   (match cnd
@@ -525,7 +534,7 @@
      (values
       (Return (Var var)) (list))]
     [(Begin es body)
-     ;(printf "Is es a list : ~a\n" (list? es))
+     (printf "Begin es ~a  body ~a\n" es body)
      (define-values (tail-exp var-list) (explicate-tail body))
      (define-values (new-tail var-lst) (explicate-effect es tail-exp)) ;; explicate-effect takes a list of expression and cont stmts, returns a tail-expr
      (values new-tail (append var-list var-lst))]
@@ -553,12 +562,11 @@
     [_ (error "explicate-tail unhandled case" exp)]))
 
 ;; This function is for the creating assignment statement in C_var language (Refer the grammar on Page 25)
-(define vector-list '())
 (define (explicate-assign exp x cont var-list)
   (match exp
     [(Var var)
       (cond 
-        [(member x vector-list) (set! vector-list (append vector-list (list var)))])
+        [(member var vector-list) (set! vector-list (append vector-list (list x)))])
      (values
       (Seq
        (Assign (Var x) (Var var)) cont)
@@ -621,12 +629,14 @@
          stmt
          (append var-thn var-els var-list var-list))])]   
     [(Let y rhs body)
+        
      (define-values (new-exp new-var-list) (explicate-assign body x cont var-list))
      (explicate-assign rhs y new-exp new-var-list)]
     [(Collect n)
      (values (Seq (Collect n) cont)
       (cons x var-list))]
     [(Allocate n t)
+     (set! vector-list (append vector-list (list x)))
      (values (Seq (Assign (Var x) (Allocate n t)) cont) 
      (cons x var-list))]
     [(GlobalValue name)
@@ -668,30 +678,10 @@
      (define exp-dict (dict-set basic-blocks 'start tail-exp))
      (define info-dict (dict-set '() 'locals (set->list (list->set var-list))))
      (set! vector-list (make-vector-list (set->list (list->set vector-list)) var-list))
-     (printf "\nvector-list ~a\n" vector-list)
+    ;  (printf "\nvector-list ~a\n" vector-list)
      (define new-dict (dict-set info-dict 'cfg (make-graph exp-dict)))
      (CProgram new-dict exp-dict)]
     [_ (error "Error: Unidentified case in explicate-control")]))
-
-
-(define (uncover-locals-tail e)
-  (match e
-   [(Assign (Var v) (HasType e t))
-    (list (cons v t))]
-   [(Seq s t)
-    (append (uncover-locals-tail s) (uncover-locals-tail t))]
-   [_ (list)])
-  )
-
-(define (uncover-locals-helper es)
-  (append* (for/list ([l es])
-		     (uncover-locals-tail (cdr l)))))
-
-;; uncover-locals : C2 -> C2
-(define (uncover-locals p)
-  (match p
-    [(CProgram info e)
-     (CProgram (dict-set info 'locals (uncover-locals-helper e)) e)]))
 
 
 ;; Remove empty edges
@@ -798,6 +788,8 @@
      (list
       (Instr 'movq (list (C->X86 (Void)) var)))]
     [(Var x)
+        (cond 
+        [(member x vector-list) (set! vector-list (append vector-list (list var)))])
      (list
       (Instr 'movq (list (Var x) var)))]
     [(Prim 'read '())
@@ -943,6 +935,8 @@
     [(CProgram info exp-dict)
         (printf "\nInfo- ~a\n" info)
        (define new-info (dict-set info 'stack-size (give-st-size (cdr (car info)))))
+       (set! vector-list (set->list (list->set vector-list)))
+        (printf "\nvector-list ~a\n" vector-list)
        (X86Program new-info (generate-blocks exp-dict))]
     [_ (error "Error: Unidentified Case in select-instructions")]))
 
@@ -1590,7 +1584,6 @@
      ("expose-allocation" ,expose-allocation ,interp-Lvec-prime)
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lvec-prime)
      ("explicate control" ,explicate-control ,interp-Cvec)
-     ("uncover locals" ,uncover-locals ,interp-Cvec)
      ("instruction selection" ,select-instructions ,interp-pseudo-x86-2)
      ("uncover live" ,uncover-live-pass ,interp-pseudo-x86-2)
      ("build graph" ,build-graph ,interp-pseudo-x86-2)
