@@ -1,10 +1,10 @@
-(define (my-find [x: Integer] [v: (Vector Integer Integer Integer Integer)]): Boolean
+(define (my-find [x : Integer] [v : (Vector Integer Integer Integer Integer)]) : Boolean
     (let ([index 0])
         (let ([found #f])
             (begin
                 (while (< index (vector-length v))
                     (begin
-                        (if (eq? x (vector-ref v index))
+                        (if (eq? x (vector-ref v 1))
                             (set! found #t)
                             (void)
                         )
@@ -17,7 +17,7 @@
     )
 )
 
-(define (find-MEX [v: (Vector Integer Integer Integer Integer)])
+(define (find-MEX [v : (Vector Integer Integer Integer Integer)]) : Integer
     (let ([ans -1])
         (let ([num 0])
             (let ([len (vector-length v)])
@@ -43,5 +43,5 @@
 
 (+ 
     (find-MEX (vector 0 1 2 3))
-    (+ 35 (find-MEX (vector 0 2 8 1)))
+    (+ 7 (+ 35 (find-MEX (vector 0 2 8 1))))
 )

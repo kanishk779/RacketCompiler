@@ -1,11 +1,11 @@
-(define (useless1 [x: Integer] [y: Integer]): Boolean
+(define (useless1 [x : Integer] [y : Integer]) : Boolean
     (< (+ x 10) (- y 10))
 )
 
-(define (useless2 [x: Integer] [y: Integer]): Boolean
+(define (useless2 [x : Integer] [y : Integer]) : Boolean
     (> (- x 2) (+ y 1))
 )
-(define (my-f [x: Integer] [y: Integer]): (Integer Integer) -> Integer
+(define (my-f [x : Integer] [y : Integer]) : (Integer Integer -> Boolean)
     (if (< x y)
         useless1
         useless2

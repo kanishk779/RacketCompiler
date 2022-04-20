@@ -1,4 +1,4 @@
-(define (actually-useless [x: Integer]): Integer
+(define (actually-useless [x : Integer]) : Integer
     (let ([sum 0])
         (begin
             (while (> x 0)
@@ -12,13 +12,13 @@
     )
 )
 
-(define (my-find [x: Integer] [v: (Vector Integer Integer Integer Integer)]): Boolean
+(define (my-find [x : Integer] [v : (Vector Integer Integer Integer Integer)]) : Boolean
     (let ([index 0])
         (let ([found #f])
             (begin
                 (while (< index (vector-length v))
                     (begin
-                        (if (eq? x (vector-ref v index))
+                        (if (eq? x (vector-ref v 0))
                             (set! found #t)
                             (void)
                         )

@@ -18,7 +18,8 @@
     (inherit check-type-equal?)
 
     (field [max-parameters 32])
-    
+    ;; es is the list of argument values
+    ;; e is the function expression
     (define/public (type-check-apply env e es)
       (define-values (e^ ty) ((type-check-exp env) e))
       (define-values (e* ty*) (for/lists (e* ty*) ([e (in-list es)])
@@ -57,7 +58,8 @@
            (Def f p:t* rt info body^)]
           [else (error 'type-check "ill-formed function definition ~a" e)]
           )))	 
-
+    ;; Here we first extract the parameter types and create a list which maps to return type
+    ;; ps -> rt, where ps is the list of all parameter types
     (define/public (fun-def-type d)
       (match d [(Def f (list `[,xs : ,ps] ...) rt info body)  `(,@ps -> ,rt)]
         [else (error 'type-check "ill-formed function definition in ~a" d)]))

@@ -10,7 +10,7 @@
                 (begin 
                     (set! count (+ count 3)) 
                     (set! total (+ total count)) 
-                    (if (= count 9) 10 20)
+                    (if (eq? count 9) 10 20)
                     (let ([second (while (< total 20) 
                         (begin 
                             (set! total (+ total 20))

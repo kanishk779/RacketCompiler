@@ -17,6 +17,7 @@
 (require "interp-Lif.rkt")
 (require "interp-Lwhile.rkt")
 (require "interp-Lvec.rkt")
+(require "interp-Lfun.rkt")
 (require "interp-Cvec.rkt")
 (require "interp-Lvec-prime.rkt")
 (require "priority_queue.rkt")
@@ -93,14 +94,22 @@
     [(Prim op es)
      (Prim op (for/list ([e es]) (shrink-exp e)))]
     [(HasType es type)
-      (HasType (shrink-exp es) type)]
+     (HasType (shrink-exp es) type)]
+    [(Apply fun args)
+     (define arg-vals (for/list ([e args]) (shrink-exp e)))
+     (Apply (shrink-exp fun) arg-vals)]
+    [(Def fun param* rt info body)
+     (Def fun param* rt info (shrink-exp body))]
     [_ (error "Error: Unidentified Case in shrink-exp")]
     ))
 
 ;; Shrink : L_if -> L_if
 (define (shrink p)
   (match p
-    [(Program info e)   (Program info (shrink-exp e))]
+    [(ProgramDefsExp info ds body)
+     (let ([top-level (for/list ([d ds]) (shrink-exp d))])
+       (ProgramDefs info (append top-level (list (Def 'main '() 'Integer '() (shrink-exp body))))))]
+    [(Program info e)   (Program info (shrink-exp e))]  ;; I think we should remove this
     [_ (error "Error : Unidentified Case in shrink")]))
 
 ;; The dictionary (i.e env) stores the mapping between the original variable names and the new corresponding variable name that we create using gensym function.
@@ -1578,18 +1587,18 @@
      ;; Uncomment the following passes as you finish them.
      ;;("partial-evaluator" ,partial-lvar ,interp-Lvar)
      ;;("optimized-par-eval" ,opt-par-lvar ,interp-Lvar)
-     ("shrink" ,shrink ,interp-Lvec)
-     ("uniquify" ,uniquify ,interp-Lvec)
-     ("uncover-get" ,uncover-get ,interp-Lvec)
-     ("expose-allocation" ,expose-allocation ,interp-Lvec-prime)
-     ("remove complex opera*" ,remove-complex-opera* ,interp-Lvec-prime)
-     ("explicate control" ,explicate-control ,interp-Cvec)
-     ("instruction selection" ,select-instructions ,interp-pseudo-x86-2)
-     ("uncover live" ,uncover-live-pass ,interp-pseudo-x86-2)
-     ("build graph" ,build-graph ,interp-pseudo-x86-2)
+     ("shrink" ,shrink ,interp-Lfun)
+     ;("uniquify" ,uniquify ,interp-Lvec)
+     ;("uncover-get" ,uncover-get ,interp-Lvec)
+     ;("expose-allocation" ,expose-allocation ,interp-Lvec-prime)
+     ;("remove complex opera*" ,remove-complex-opera* ,interp-Lvec-prime)
+     ;("explicate control" ,explicate-control ,interp-Cvec)
+     ;("instruction selection" ,select-instructions ,interp-pseudo-x86-2)
+     ;("uncover live" ,uncover-live-pass ,interp-pseudo-x86-2)
+     ;("build graph" ,build-graph ,interp-pseudo-x86-2)
      ;  ("assign homes" ,assign-homes ,interp-x86-0)
-     ("allocate-registers" ,allocate-registers ,interp-pseudo-x86-2)
-     ("patch instructions" ,patch-instructions ,interp-x86-2)
-     ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-2)
+     ;("allocate-registers" ,allocate-registers ,interp-pseudo-x86-2)
+     ;("patch instructions" ,patch-instructions ,interp-x86-2)
+     ;("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-2)
      ))
 

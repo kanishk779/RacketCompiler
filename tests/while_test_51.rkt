@@ -8,5 +8,5 @@
                 (begin 
                     (set! count (+ count 3)) 
                     (set! total (+ total count)) 
-                    (if (= count 9) 10 20)))]) 
+                    (if (eq? count 9) 10 20)))]) 
                     (+ count total)))))

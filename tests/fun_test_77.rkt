@@ -1,4 +1,4 @@
-(define (useless [x: Integer]): Integer
+(define (useless [x : Integer]) : Integer
     (let ([sum 0])
         (begin
             (while (> x 0)

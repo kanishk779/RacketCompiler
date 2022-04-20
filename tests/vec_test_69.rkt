@@ -1,4 +1,4 @@
-(+ 10 35)
+(+ 35 10)
 ; (let ([v (vector 1 2 3)]) 
 ;     (let ([iter (vector-length v)]) 
 ;         (begin

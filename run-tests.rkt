@@ -18,6 +18,8 @@
 (require "interp-Cvec.rkt")
 (require "type-check-Cvec.rkt")
 (require "interp-Lvec-prime.rkt")
+(require "type-check-Lfun.rkt")
+(require "interp-Lfun.rkt")
 ; (require "type-check-Lvec-prime.rkt")
 (debug-level 1)
 (AST-output-syntax 'concrete-syntax)
@@ -40,7 +42,9 @@
 ;; NOTE -> we can replace "var" with "if" and vice-versa for testing different versions of the languages
 
 ;; Replace the #f with the type-checker
-; (interp-tests "vec" type-check-Lvec compiler-passes interp-Lvec "vec_test" (tests-for "vec"))
+
+(interp-tests "fun" type-check-Lfun compiler-passes interp-Lfun "fun_test" (tests-for "fun"))
+;(interp-tests "vec" type-check-Lvec compiler-passes interp-Lvec "vec_test" (tests-for "vec"))
 ; (interp-tests "aman" type-check-Lvec compiler-passes interp-Lvec "aman_test" (tests-for "aman"))
 
 ; (interp-tests "var" #f compiler-passes interp-Lvar "var_test" (tests-for "var"))
@@ -48,5 +52,5 @@
 
 
 ;; Uncomment the following when all the passes are complete to test the final x86 code.
-(compiler-tests "vec" type-check-Lvec compiler-passes "vec_test" (tests-for "vec"))
+;(compiler-tests "vec" type-check-Lvec compiler-passes "vec_test" (tests-for "vec"))
 
