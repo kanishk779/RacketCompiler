@@ -141,12 +141,31 @@
        (Let new-name rhs ((uniquify-exp new-env) body))]
       [(Prim op es)
        (Prim op (for/list ([e es]) ((uniquify-exp env) e)))]
-      [(HasType ex t) (HasType ((uniquify-exp env) ex) t)]
+      [(HasType ex t)
+       (HasType ((uniquify-exp env) ex) t)]
+      [(Apply fun args)
+       (Apply ((uniquify-exp env) fun) (map (uniquify-exp env) args))]
+      [(Def name param* rt info body)
+       (define new-param (match param*
+                           [(list `[,xs : ,ps] ...)
+                            (for/list ([x xs] [p ps]) `[,(dict-ref env x) : ,p])]))  ;; changing the names of parameters using the environment
+       (Def (dict-ref env name) new-param rt info ((uniquify-exp env) body))]
       [_ (error "Error: Unidentified Case in uniquify-exp")])))
+
+;; generate environment for the function, basically add the parameters info into environment
+(define (give-env d)
+  (match d
+    [(Def name (list `[,xs : ,ps] ...) rt info body)
+     (for/list ([x xs]) (cons x (gensym x)))]
+    [_ (error "Error: Unidentified case in give-env")]))
 
 ;; uniquify : R1 -> R1
 (define (uniquify p)
   (match p
+    [(ProgramDefs info ds)
+     (define base-env (map (lambda (d) (cons (Def-name d) (Def-name d))) ds)) ;; base-env creates a dictionary which maps each function name to itself.
+     (let ([new-ds (for/list ([d ds]) ((uniquify-exp (append base-env (give-env d))) d))]) ;; Append the base env with new environment for this particular function
+       (ProgramDefs info new-ds))]
     [(Program info e) (Program info ((uniquify-exp '()) e))]
     [_ (error "Error: Unidentified Case in uniquify")]))
 
@@ -1588,7 +1607,7 @@
      ;;("partial-evaluator" ,partial-lvar ,interp-Lvar)
      ;;("optimized-par-eval" ,opt-par-lvar ,interp-Lvar)
      ("shrink" ,shrink ,interp-Lfun)
-     ;("uniquify" ,uniquify ,interp-Lvec)
+     ("uniquify" ,uniquify ,interp-Lfun)
      ;("uncover-get" ,uncover-get ,interp-Lvec)
      ;("expose-allocation" ,expose-allocation ,interp-Lvec-prime)
      ;("remove complex opera*" ,remove-complex-opera* ,interp-Lvec-prime)
