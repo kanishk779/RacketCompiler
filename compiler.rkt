@@ -196,7 +196,7 @@
      (define arg-vals (for/list ([e args]) (reveal-function-exp e )))
      (match fun
        [(Var var) (Apply (FunRef var) arg-vals)]
-       [_ (Apply (reveal-function-exp fun ) arg-vals)])]
+       [_ (Apply (reveal-function-exp fun) arg-vals)])]
     [(Def fun param* rt info body)
      (Def fun param* rt info (reveal-function-exp body ))]
     [_ (error "Error: Unidentified Case in reveal-function-exp")]
@@ -379,22 +379,26 @@
             (set! i (+ 1 i))
             q))
         (let ([q (Let (gensym '_)
-                       (If (Prim '< (list (Prim '+ (list (GlobalValue 'free_ptr) (Int bytes))) (GlobalValue 'fromspace_end)))
-                            (Void)
-                            (Collect bytes))
-                       (Let 'v (Allocate (length e) type)
-                             (foldl
-                               (lambda (elem acc)
-                                 (let* ([x (string->symbol (string-append "x" (number->string i)))]        
-                                        [q (Let (gensym '_) (Prim 'vector-set! (list (HasType (Var 'v) type) (Int i) (Var x))) acc)])
-                                   (set! i (+ 1 i))
-                                   q
-                                   ))
-                               (begin (set! i 0) (HasType (Var 'v) type))
-                               e #;(map expose-allocation-exp e))))])
+                      (If (Prim '< (list (Prim '+ (list (GlobalValue 'free_ptr) (Int bytes))) (GlobalValue 'fromspace_end)))
+                          (Void)
+                          (Collect bytes))
+                      (Let 'v (Allocate (length e) type)
+                           (foldl
+                            (lambda (elem acc)
+                              (let* ([x (string->symbol (string-append "x" (number->string i)))]
+                                     [q (Let (gensym '_) (Prim 'vector-set! (list (HasType (Var 'v) type) (Int i) (Var x))) acc)])
+                                (set! i (+ 1 i))
+                                q
+                               )
+                              )
+                            (begin (set! i 0) (HasType (Var 'v) type))
+                            e #;(map expose-allocation-exp e)))
+                      )
+                 ]
+              )
           (begin (set! i 0) q)
           )
-          e)]
+        e)]
     [(HasType e t)
      (HasType (expose-allocation-exp e) t)]
     [(Def name param rt info body)
@@ -419,10 +423,37 @@
     [(Void) #t]
     [_ #f]))
 
+;; creates a list for arguments of Apply struct
+(define (make-list-apply len curr)
+  (if (eq? curr len)
+      (list)
+      (cons (Var (string->symbol (string-append "x" (number->string curr)))) (make-list-apply len (+ curr 1)))))
+
 ;; Converts the complex expressions to atomic expressions (Refer the grammar on page 27 for atomic expressions)
 ;; by introducing new variables using the Let feature of Racket.
 (define (rco_atom exp)
   (match exp
+    [(FunRef fun)
+     (define new-name (gensym "fun"))
+     (Let new-name (FunRef fun) (Var new-name))] ;; Not sure if it is correct
+    [(Apply fun args)
+     (define new-name (gensym "fun"))
+     (define i 0)
+     (foldl
+      (lambda (elem acc)
+        (let* ([x (string->symbol (string-append "x" (number->string i)))]
+               [q (Let x (list-ref args i) acc)])
+          (set! i (+ 1 i))
+          q
+          )
+        )
+      (begin (set! i 0)
+             (match fun
+               [(FunRef var) (Apply fun (make-list-apply (length args) 0))]
+               [_ (Let new-name (rco_exp fun) (Apply (FunRef new-name) (make-list-apply (length args) 0)))]
+               ))
+      args #;(map rco_exp args))]
+     
     [(Prim op (list e1 e2))
      (cond
        [(and (not (atom? e1)) (not (atom? e2)))
@@ -479,17 +510,14 @@
              (Prim 'vector-set! (list e1 int (Var new-name))))]
        [(atom? e2)
         (define new-name (gensym "tmp"))
-        (Let new-name (rco_exp e1)
-             (Prim 'vector-set! (list (Var new-name) int e2)))]
+        (Let new-name (rco_exp e1) (Prim 'vector-set! (list (Var new-name) int e2)))]
        )]
     [(Prim 'vector-ref (list e1 int)) 
       (define new-name (gensym "tmp"))
-      (Let new-name (rco_exp e1)
-      (Prim 'vector-ref (list (Var new-name) int)))]
+      (Let new-name (rco_exp e1) (Prim 'vector-ref (list (Var new-name) int)))]
     [(Prim 'vector-length (list e)) 
       (define new-name (gensym "tmp"))
-      (Let new-name (rco_exp e)
-      (Prim 'vector-length (list (Var new-name))))] 
+      (Let new-name (rco_exp e) (Prim 'vector-length (list (Var new-name))))] 
     ;; This will cover,  not, - (unary) 
     [(Prim op (list e1))
      (if (atom? e1)
@@ -506,6 +534,10 @@
      (Let x (rco_exp e) (rco_exp body))]
     [(Collect n) (Collect n)]
     [(GlobalValue name) (GlobalValue name)]
+    [(Def fun param rt info body)
+     (Def fun param rt info (rco_exp body))]
+    [(FunRef fun) (FunRef fun)]
+    [(Apply fun args) (rco_atom exp)]
     [(Allocate n t) (Allocate n t)]
     [(HasType e t)
      (HasType (rco_exp e) t)]
@@ -524,8 +556,11 @@
     
 (define (remove-complex-opera* p)
   (match p
+    [(ProgramDefs info ds)
+     (define new-ds (for/list ([d ds]) (rco_exp d)))
+     (ProgramDefs info new-ds)]
     [(Program info e) (Program info (rco_exp e))]
-    [_ (error "Error: Unidentified case")]))
+    [_ (error "Error: Unidentified case in remove-complex-opera*")]))
 
 ;; The global alist for blocks
 (define basic-blocks (list))
@@ -563,7 +598,6 @@
     [(Void) (values cont (list))]
     [(GetBang var) (values cont (list))]
     [(SetBang var rhs)
-     ;(printf "setbang in effect\n")
      (explicate-assign rhs var cont (list))]
     [(Prim 'read es)                              ;; Read can be statement now
      (values (Seq (Prim 'read es) cont) (list))]
@@ -594,14 +628,12 @@
       (Goto loop-name)
       (append var-lst var-list))]
     [(Prim 'vector-set! es)
-    (printf "reached our boi")
      (values
       (Seq
        (Assign (Var (gensym '_)) (Prim 'vector-set! es)) cont)
       (list))]
     [(Prim op es)
      (values cont (list))]
-    
     [_ (error "Error: Unidentified Case in explicate-effect" exp)]))
      
 (define vector-list '())     
@@ -1347,7 +1379,6 @@
 
 ;; Dataflow Analysis
 (define (analyze-dataflow G transfer bottom join)
-  ; (define mapping (make-hash))
   (for ([v (in-vertices G)])
     (set! label->live (cons (cons v bottom) label->live)))   ;; At the start ever block's live before set will be empty (bottom --> empty set)
     
@@ -1551,7 +1582,7 @@
 (define (new-allocation block colouring colourreg offset)
   (match block
     [(Block info instrs) (Block info (allocate-register-helper instrs colouring colourreg offset))]
-    [_ (error "Error")]))
+    [_ (error "Error: unidentified case in new-allocation" block)]))
 
 ;; Replaces variable names with registers or stack locations
 (define (allocate-registers p)
@@ -1571,16 +1602,14 @@
             
             (define colouring (dsatur q colours saturation graph))
             (define color-list (remove-duplicates (dict-values colouring)))
-            (printf "Printing the color-list :- \n")
-            (printf "~a\n" color-list)
+        
             (define spilled-vars (let ([x (- (- (length color-list) 1) (length register-list))]) (if (> 0 x) 0 x))) 
-            (printf "Spilled vars- ~a\n" spilled-vars)
+  
             (define new-reg-list (add-stack-locations register-list spilled-vars))
             (define colourreg (generate-colourreg '() 0 new-reg-list))
                     
             (define mapping (allocate-create-mapping nodes colouring colourreg))
-            ; (printf "Printing the mapping :- \n")
-            ; (printf "~a\n" mapping)
+            
             (define callee-reg (remove-duplicates (used-callee (dict-values mapping))))
             (define n-info (dict-set info 'used_callee callee-reg))
             (define new-info (dict-set n-info 'spilled-vars spilled-vars))
@@ -1723,7 +1752,7 @@
      ("limit-function" ,limit-function ,interp-Lfun-prime)
      ("uncover-get" ,uncover-get ,interp-Lfun-prime)
      ("expose-allocation" ,expose-allocation ,interp-Lfun-prime)
-     ;("remove complex opera*" ,remove-complex-opera* ,interp-Lvec-prime)
+     ("remove complex opera*" ,remove-complex-opera* ,interp-Lfun-prime)
      ;("explicate control" ,explicate-control ,interp-Cvec)
      ;("instruction selection" ,select-instructions ,interp-pseudo-x86-2)
      ;("uncover live" ,uncover-live-pass ,interp-pseudo-x86-2)
