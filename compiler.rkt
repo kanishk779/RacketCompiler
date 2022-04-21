@@ -278,6 +278,7 @@
     [(Int n) (set)]
     [(Bool b) (set)]
     [(Void) (set)]
+    [(FunRef f) (set)]
     [(Let x e body)
      (set-union (collect-set! e) (collect-set! body))]
     [(If e1 e2 e3)
@@ -291,7 +292,12 @@
     [(Prim op es)
      (foldl set-union (set) (for/list ([e es]) (collect-set! e)))]
     [(HasType ex t) (collect-set! ex)]
-    [_ (error "Error: Unidentified Case in collect-set!")]))
+    [(Def name param rt info body)
+     (collect-set! body)]
+    [(Apply fun args)
+     (define new-arg (foldl set-union (set) (for/list ([arg args]) (collect-set! arg))))
+     (set-union (collect-set! fun) new-arg)]
+    [_ (error "Error: Unidentified Case in collect-set!" exp)]))
 
 ;; Replace the occurences of mutable variables with GetBang
 (define ((uncover-get! vars) exp)
@@ -317,11 +323,19 @@
     [(Prim op es)
      (Prim op (for/list ([e es]) ((uncover-get! vars) e)))]
     [(HasType ex t) (HasType ((uncover-get! vars) ex) t)]
+    [(Def name param rt info body)
+     (Def name param rt info ((uncover-get! vars) body))]
+    [(FunRef f) (FunRef f)]
+    [(Apply fun arg)
+     (Apply ((uncover-get! vars) fun) (map (uncover-get! vars) arg))]
     [_ (error "Error: Unidentified Case in uncover-get!")]))
 
 ;; uncover-get
 (define (uncover-get p)
   (match p
+    [(ProgramDefs info ds)
+     (define new-ds (for/list ([d ds]) (let ([vars (collect-set! d)]) ((uncover-get! vars) d))))
+     (ProgramDefs info new-ds)]
     [(Program info e)
      (define vars (collect-set! e))
      (Program info ((uncover-get! vars) e))]
@@ -1707,8 +1721,8 @@
      ("uniquify" ,uniquify ,interp-Lfun)
      ("reveal-function" ,reveal-function ,interp-Lfun-prime)
      ("limit-function" ,limit-function ,interp-Lfun-prime)
+     ("uncover-get" ,uncover-get ,interp-Lfun-prime)
      ("expose-allocation" ,expose-allocation ,interp-Lfun-prime)
-     ;("uncover-get" ,uncover-get ,interp-Lvec)
      ;("remove complex opera*" ,remove-complex-opera* ,interp-Lvec-prime)
      ;("explicate control" ,explicate-control ,interp-Cvec)
      ;("instruction selection" ,select-instructions ,interp-pseudo-x86-2)
