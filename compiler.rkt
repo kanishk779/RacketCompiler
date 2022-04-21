@@ -335,6 +335,8 @@
     [(Void) (Void)]
     [(Let x e body)
      (Let x (expose-allocation-exp e) (expose-allocation-exp body))]
+    [(FunRef f)       (FunRef f)]
+    [(Apply fun arg) (Apply (expose-allocation-exp fun) (map expose-allocation-exp arg))]
     [(If e1 e2 e3)
      (If (expose-allocation-exp e1) (expose-allocation-exp e2) (expose-allocation-exp e3))]
     [(SetBang var rhs)
@@ -346,11 +348,11 @@
      (define new-es (for/list ([e es]) (expose-allocation-exp e)))
      (Begin new-es (expose-allocation-exp body))]
     [(Prim 'vector-ref (list e int))
-      (Prim 'vector-ref (list (expose-allocation-exp e) int))]
+     (Prim 'vector-ref (list (expose-allocation-exp e) int))]
     [(Prim 'vector-set! (list e1 int e2))
-       (Prim 'vector-set! (list (expose-allocation-exp e1) int (expose-allocation-exp e2)))]
+     (Prim 'vector-set! (list (expose-allocation-exp e1) int (expose-allocation-exp e2)))]
     [(Prim 'vector-length (list e))
-      (Prim 'vector-length (list (expose-allocation-exp e)))]
+     (Prim 'vector-length (list (expose-allocation-exp e)))]
     [(Prim op es)
      (Prim op (for/list ([e es]) (expose-allocation-exp e)))]
     [(HasType (Prim 'vector e) type)
@@ -379,14 +381,19 @@
           (begin (set! i 0) q)
           )
           e)]
-      [(HasType e t)
-       (HasType (expose-allocation-exp e) t)]
+    [(HasType e t)
+     (HasType (expose-allocation-exp e) t)]
+    [(Def name param rt info body)
+     (Def name param rt info (expose-allocation-exp body))]
     [_ (error "Error: Unidentified Case in expose allocation!")]))
 
 (define (expose-allocation p)
-  (match p  
-    [(Program info e) 
-      (Program info (expose-allocation-exp e))]
+  (match p
+    [(ProgramDefs info ds)
+     (define new-ds (for/list ([d ds]) (expose-allocation-exp d)))
+     (ProgramDefs info new-ds)]
+    [(Program info e)
+     (Program info (expose-allocation-exp e))]
     [_ (error "Error: Unidentified Case in expose allocation")]))
 
 ;; Checks if an expression is atomic (i.e a variable or an integer)
@@ -547,7 +554,6 @@
     [(Prim 'read es)                              ;; Read can be statement now
      (values (Seq (Prim 'read es) cont) (list))]
     [exp-list #:when (list? exp-list)
-     ;(printf "exp is a list, with length : ~a\n" (length exp))
      (explicate-effect-list exp cont)]
     [(If cnd thn els) ;; Recursively call on then and else block
      (define-values (thn^ var-thn) (explicate-effect thn cont))
@@ -557,19 +563,13 @@
      (define-values (stmt var-lst) (explicate-pred cnd thn-block els-block))
      (values stmt (append var-lst var-thn els-thn))]
     [(Let x rhs body)
-    (printf "\nExplicate at ~a\n" exp)
-        ; (match body
-        ;     [(Prim 'vector-set! (list atm1 (Int n) atm2)) (printf "\nExplicate at ~a\n" exp)]
-        ;     [_ (printf "")])
      (define-values (body^ var-lst) (explicate-effect body cont))
      (explicate-assign rhs x body^ var-lst)]
     [(Begin es body)
-     ;(printf "Begin in effect position\n")
      (define-values (body^ var-list) (explicate-effect body cont))
      (define-values (stmt var-lst) (explicate-effect-list es body^))
      (values stmt (append var-list var-lst))]
     [(WhileLoop cnd body)
-     ;(printf "while loop in effect position \n")
      (define loop-name (gensym 'loop))
      (define-values (body^ var-list) (explicate-effect body (Goto loop-name)))
      (define body-block (create-block body^))
@@ -1707,8 +1707,8 @@
      ("uniquify" ,uniquify ,interp-Lfun)
      ("reveal-function" ,reveal-function ,interp-Lfun-prime)
      ("limit-function" ,limit-function ,interp-Lfun-prime)
+     ("expose-allocation" ,expose-allocation ,interp-Lfun-prime)
      ;("uncover-get" ,uncover-get ,interp-Lvec)
-     ;("expose-allocation" ,expose-allocation ,interp-Lvec-prime)
      ;("remove complex opera*" ,remove-complex-opera* ,interp-Lvec-prime)
      ;("explicate control" ,explicate-control ,interp-Cvec)
      ;("instruction selection" ,select-instructions ,interp-pseudo-x86-2)
