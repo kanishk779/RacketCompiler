@@ -20,6 +20,7 @@
 (require "interp-Lvec-prime.rkt")
 (require "type-check-Lfun.rkt")
 (require "interp-Lfun.rkt")
+(require "interp-Lfun-prime.rkt")
 ; (require "type-check-Lvec-prime.rkt")
 (debug-level 1)
 (AST-output-syntax 'concrete-syntax)

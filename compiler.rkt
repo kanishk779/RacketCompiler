@@ -17,6 +17,7 @@
 (require "interp-Lif.rkt")
 (require "interp-Lwhile.rkt")
 (require "interp-Lvec.rkt")
+(require "interp-Lfun-prime.rkt")
 (require "interp-Lfun.rkt")
 (require "interp-Cvec.rkt")
 (require "interp-Lvec-prime.rkt")
@@ -169,6 +170,46 @@
     [(Program info e) (Program info ((uniquify-exp '()) e))]
     [_ (error "Error: Unidentified Case in uniquify")]))
 
+;; reveal function calls in each function definition
+(define (reveal-function-exp d )
+  (match d
+    [(Int int) d]
+    [(Bool b) d]
+    [(Void) d]
+    [(Var var) d]
+    [(If e1 e2 e3)
+     (If (reveal-function-exp e1 ) (reveal-function-exp e2 ) (reveal-function-exp e3 ))]
+    [(Let x e body)
+     (Let x (reveal-function-exp e ) (reveal-function-exp body ))]
+    [(SetBang var rhs)
+     (SetBang var (reveal-function-exp rhs ))]
+    [(WhileLoop cnd body)
+     (WhileLoop (reveal-function-exp cnd ) (reveal-function-exp body ))]
+    [(Begin es body)
+     (define new-exp-list (for/list ([e es]) (reveal-function-exp e )))
+     (Begin new-exp-list (reveal-function-exp body ))]
+    [(Prim op es)
+     (Prim op (for/list ([e es]) (reveal-function-exp e )))]
+    [(HasType es type)
+     (HasType (reveal-function-exp es ) type)]
+    [(Apply fun args)
+     (define arg-vals (for/list ([e args]) (reveal-function-exp e )))
+     (match fun
+       [(Var var) (Apply (FunRef var) arg-vals)]
+       [_ (Apply (reveal-function-exp fun ) arg-vals)])]
+    [(Def fun param* rt info body)
+     (Def fun param* rt info (reveal-function-exp body ))]
+    [_ (error "Error: Unidentified Case in reveal-function-exp")]
+    ))
+
+;; Reveal functions
+(define (reveal-function p)
+  (match p
+    [(ProgramDefs info ds)
+     (define new-ds (for/list ([d ds]) (reveal-function-exp d )))
+     (ProgramDefs info new-ds)]
+    [_ (error "Error: Unidentified Case in reveal-function")]))
+
 ;; collects all the variables which are mutating
 (define (collect-set! exp)
   (match exp
@@ -226,7 +267,6 @@
     [_ (error "Error: Unidentified Case in uncover-get")]))
 
 (define (expose-allocation-exp exp)
-    ; (printf "\nWorking on ~a\n" exp)
   (match exp
     [(Var x) (Var x)]
     [(Int n) (Int n)]
@@ -1608,6 +1648,7 @@
      ;;("optimized-par-eval" ,opt-par-lvar ,interp-Lvar)
      ("shrink" ,shrink ,interp-Lfun)
      ("uniquify" ,uniquify ,interp-Lfun)
+     ("reveal-function" ,reveal-function ,interp-Lfun-prime)
      ;("uncover-get" ,uncover-get ,interp-Lvec)
      ;("expose-allocation" ,expose-allocation ,interp-Lvec-prime)
      ;("remove complex opera*" ,remove-complex-opera* ,interp-Lvec-prime)
