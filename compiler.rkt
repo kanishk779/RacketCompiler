@@ -210,6 +210,67 @@
      (ProgramDefs info new-ds)]
     [_ (error "Error: Unidentified Case in reveal-function")]))
 
+;; Limit function expression
+(define (limit-function-exp vec in-vector body)
+  (match body
+    [(Int int) (Int int)]
+    [(Bool b) (Bool b)]
+    [(Void) (Void)]
+    [(FunRef fun)
+     (if (member fun in-vector)
+         (Prim 'vector-ref (list (Var vec) (Int (index-of in-vector fun))))
+         (FunRef fun))]
+    [(Var var)
+     (if (member var in-vector)
+         (Prim 'vector-ref (list (Var vec) (Int (index-of in-vector var))))
+         (Var var))]
+    [(If e1 e2 e3)
+     (If (limit-function-exp vec in-vector e1 ) (limit-function-exp vec in-vector e2 ) (limit-function-exp vec in-vector e3 ))]
+    [(Let x e body)
+     (Let x (limit-function-exp vec in-vector e) (limit-function-exp vec in-vector body))]
+    [(SetBang var rhs)
+     (if (member var in-vector)
+         (Prim 'vector-set! (list (Var vec) (Int (index-of in-vector var)) (limit-function-exp vec in-vector rhs)))
+         (SetBang var (limit-function-exp vec in-vector rhs)))]
+    [(WhileLoop cnd body)
+     (WhileLoop (limit-function-exp vec in-vector cnd) (limit-function-exp vec in-vector body))]
+    [(Begin es body)
+     (define new-exp-list (for/list ([e es]) (limit-function-exp vec in-vector e)))
+     (Begin new-exp-list (limit-function-exp vec in-vector body))]
+    [(Prim op es)
+     (Prim op (for/list ([e es]) (limit-function-exp vec in-vector e)))]
+    [(HasType es type)
+     (HasType (limit-function-exp vec in-vector es) type)]
+    [(Apply fun args)
+     (define new-args (if (> (length args) 6)
+                          (append (take args 5) (list (Prim 'vector (drop args 5))))
+                          args))
+     (define args^ (for/list ([arg new-args]) (limit-function-exp vec in-vector arg)))
+     (Apply (limit-function-exp vec in-vector fun)  args^)]))
+
+;; Limit functions definition for top-level functions
+(define (limit-function-def d)
+  (match d
+    [(Def fun param rt info body)
+     (define vec (gensym 'arg-vec))   ;; give a new name to the generated vector
+     (define types (map caddr param)) ;; extract the types out from param
+     (define in-vector (if (> (length param) 6)
+                           (map car (drop param 5)) ;; Name of variables which will be in the vector
+                           (list)))
+     (define new-param (if (> (length param) 6)
+                           (append (take param 5) `((,vec : ,(cons 'Vector (drop types 5)))))
+                           param))
+     (Def fun new-param rt info (limit-function-exp vec in-vector body))]
+    [_ (error "Error: Unidentified case in limit-function-def")]))
+
+;; Limit functions
+(define (limit-function p)
+  (match p
+    [(ProgramDefs info ds)
+     (define new-ds (for/list ([d ds]) (limit-function-def d)))
+     (ProgramDefs info new-ds)]
+    [_ (error "Error: Unidentified case in limit-function")]))
+
 ;; collects all the variables which are mutating
 (define (collect-set! exp)
   (match exp
@@ -362,8 +423,7 @@
      (define new-name (gensym "tmp"))
      (Let new-name (rco_exp e1)
           (Prim op (list (Var new-name))))]
-    [else ;(printf "\nProcessing atm- ~a\n" exp)
-          (error "Error: Unidentified Case in rco_atom")]))
+    [else (error "Error: Unidentified Case in rco_atom")]))
     
 ;; Converts complex expression using the above function rco_atom, only if there is a need to
 ;; introduce a new variable, for other cases rco_exp function handles the expression
@@ -384,8 +444,6 @@
     [(WhileLoop cnd body)
      (WhileLoop (rco_exp cnd) (rco_exp body))]
     [(Prim 'read '()) (Prim 'read '())]
-    ; [(Prim 'vector-set! (list (Var 'v) int e2)) 
-    ;   (Prim 'vector-set! (list (Var 'v) int (rco_atom e2)))]
     [(Prim 'vector-set! (list e1 int e2)) 
       (cond
        [(and (not (atom? e1)) (not (atom? e2)))
@@ -430,8 +488,7 @@
     [(Allocate n t) (Allocate n t)]
     [(HasType e t)
      (HasType (rco_exp e) t)]
-    [_  ;(printf "\nProcessing- ~a\n" exp)
-        (error "Error: Unidentified case in rco_exp")]))
+    [_  (error "Error: Unidentified case in rco_exp")]))
          
 (define (test_rco p)
   (assert "testing rco"
@@ -1649,6 +1706,7 @@
      ("shrink" ,shrink ,interp-Lfun)
      ("uniquify" ,uniquify ,interp-Lfun)
      ("reveal-function" ,reveal-function ,interp-Lfun-prime)
+     ("limit-function" ,limit-function ,interp-Lfun-prime)
      ;("uncover-get" ,uncover-get ,interp-Lvec)
      ;("expose-allocation" ,expose-allocation ,interp-Lvec-prime)
      ;("remove complex opera*" ,remove-complex-opera* ,interp-Lvec-prime)
