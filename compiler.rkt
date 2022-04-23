@@ -901,8 +901,10 @@
           ;                                                                                                     (cons l (instructions l))
           ;                                                                                                     '()))))
           (define new-dict (dict-set info 'cfg (make-graph exp-dict new-fun)))
+          (printf "locals are ~a" locals)
           (Def fun param* rt new-dict exp-dict)])))
-      (ProgramDefs (cons (cons 'locals locals) info) new-defs)]
+          (define new-info (dict-set info 'locals locals))
+      (ProgramDefs new-info new-defs)]
 
     [_ (error "Error: Unidentified case in explicate-control")]))
 
@@ -1182,12 +1184,12 @@
 ;; select-instructions : C_if -> pseudo-x86
 (define (select-instructions p)
   (match p
-    ; [(CProgram info exp-dict)
-    ;     (printf "\nInfo- ~a\n" info)
-    ;    (define new-info (dict-set info 'stack-size (give-st-size (cdr (car info)))))
-    ;    (set! vector-list (set->list (list->set vector-list)))
-    ;     (printf "\nvector-list ~a\n" vector-list)
-    ;    (X86Program new-info (generate-blocks exp-dict))]
+    [(CProgram info exp-dict)
+        (printf "\nInfo- ~a\n" info)
+       (define new-info (dict-set info 'stack-size (give-st-size (cdr (car info)))))
+       (set! vector-list (set->list (list->set vector-list)))
+        (printf "\nvector-list ~a\n" vector-list)
+       (X86Program new-info (generate-blocks exp-dict))]
 
     [(ProgramDefs info defs)
      (define new-defs (for/list ([d defs])
@@ -1204,6 +1206,7 @@
                          (Def label '() returntype
                               (dict-set info 'num-params (length paramtypes))
                               new-alist)])))
+      (set! vector-list (set->list (list->set vector-list)))
      (ProgramDefs info new-defs)]
     [_ (error "Error: Unidentified Case in select-instructions")]))
 
@@ -1376,7 +1379,11 @@
     [(JmpIf cc label)
      (set)]
     [(Callq label arity)
-     (set)]  ;; for now we return an empty set, but if arity > 0, then we need to return the register used for parameter passing
+     (list->set (take '(rdi rsi rdx rcx r8 r9) arity))]  ;; for now we return an empty set, but if arity > 0, then we need to return the register used for parameter passing
+    [(IndirectCallq label arity)
+     (list->set (take '(rdi rsi rdx rcx r8 r9) arity))]
+    [(TailJmp label arity)
+     (list->set (take '(rdi rsi rdx rcx r8 r9) arity))]
     [(Jmp 'conclusion) (set (Reg 'rax) (Reg 'rsp))] ;; We can hard-core this because we know conclusion block reads from rax and rsp
     [(Retq)
      (set (Reg 'rax))]  ;; Check this, I am not sure if it is correct, but the logic here is that
@@ -1413,6 +1420,8 @@
      (list->set vector-list)]   ;; Tuple type variables are to be spilled during call to collector - Pg 111
     [(Callq label arity)
      (list->set caller-saved)]  ;; All the caller-saved registers are in the write set as mentioned on Page 36.
+    [(IndirectCallq label arity)
+     (list->set caller-saved)]
     [(Retq) (set)]
     [_ (set)]))
   
@@ -1499,17 +1508,17 @@
 ;; Uncover-live pass
 (define (uncover-live-pass p)
   (match p
-    [(X86Program info block-dict)
-     (set! label->live (list (cons 'conclusion (set (Reg 'rax) (Reg 'rsp)))))  ;; We add this because there is no entry for conclusion in our basic-blocks dict
-     (define cfg (dict-ref info 'cfg))
-     (define t-cfg (transpose cfg))
-    ;  (define tsort-order (tsort t-cfg))   ;; list of vertices
-    ;  (define label-block-mapping (uncover-blocks tsort-order block-dict))
-    (set! bdict block-dict)
+    [(ProgramDefs info defs)
+      (set! label->live (list (cons 'conclusion (set (Reg 'rax) (Reg 'rsp)))))  ;; We add this because there is no entry for conclusion in our basic-blocks dict
+      (define new-defs (for/list ([d defs]) (match d
+        [(Def label paramtypes rt info blocks)
+          (define cfg (dict-ref info 'cfg))
+          (define t-cfg (transpose cfg))
+          (set! bdict blocks)
+          (define label-block-mapping (analyze-dataflow t-cfg analyze-single-block (set) set-union))
+        (Def label paramtypes rt info bdict)])))
+     (ProgramDefs info new-defs)]
 
-    (define label-block-mapping (analyze-dataflow t-cfg analyze-single-block (set) set-union))
-     (X86Program info bdict)]
-     
     [_ (error "Error: Unidentified Case while matching X86Program in uncover-live-pass")]))
 
 ;; Process single instruction, returns list of edges, where an edge is a list of two elements, source and vertex
@@ -1851,8 +1860,8 @@
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lfun-prime)
      ("explicate control" ,explicate-control ,interp-Cfun)
      ("instruction selection" ,select-instructions ,interp-pseudo-x86-3)
-     ;("uncover live" ,uncover-live-pass ,interp-pseudo-x86-2)
-     ;("build graph" ,build-graph ,interp-pseudo-x86-2)
+     ("uncover live" ,uncover-live-pass ,interp-pseudo-x86-3)
+    ;  ("build graph" ,build-graph ,interp-pseudo-x86-3)
      ;  ("assign homes" ,assign-homes ,interp-x86-0)
      ;("allocate-registers" ,allocate-registers ,interp-pseudo-x86-2)
      ;("patch instructions" ,patch-instructions ,interp-x86-2)
