@@ -883,7 +883,6 @@
   (set! vector-list '())
   (match p
     [(ProgramDefs info defs) 
-      (define locals '())
       (define new-defs (for/list ([d defs]) 
         (match d
         ; [(Def label paramtypes returntype info e)
@@ -895,16 +894,14 @@
           ; (printf "\n Basic blocks for ~a are ~a\n" new-fun basic-blocks)
           (define exp-dict (dict-set basic-blocks new-fun tail-exp))
           ; (set! localvars (append localvars let-binds))
-          (set! locals (append locals (set->list (list->set var-list))))
+          (define locals (set->list (list->set var-list)))
           (set! vector-list (make-vector-list (set->list (list->set vector-list)) var-list))
-          ; (define def-alist (filter (λ (v) (not (equal? v '()))) (for/list ([l (get-vertices globalCFG)]) (if (equal? fun (function l))
-          ;                                                                                                     (cons l (instructions l))
-          ;                                                                                                     '()))))
-          (define new-dict (dict-set info 'cfg (make-graph exp-dict new-fun)))
-          (printf "locals are ~a" locals)
+          (define new-info (dict-set '() 'locals locals))
+          (define new-dict (dict-set new-info 'cfg (make-graph exp-dict new-fun)))
+          ; (printf "locals are ~a" locals)
           (Def fun param* rt new-dict exp-dict)])))
-          (define new-info (dict-set info 'locals locals))
-      (ProgramDefs new-info new-defs)]
+          
+      (ProgramDefs info new-defs)]
 
     [_ (error "Error: Unidentified case in explicate-control")]))
 
@@ -1522,12 +1519,42 @@
     [_ (error "Error: Unidentified Case while matching X86Program in uncover-live-pass")]))
 
 ;; Process single instruction, returns list of edges, where an edge is a list of two elements, source and vertex
-(define (generate-edges instr live-after-set)
+(define (generate-edges instr live-after-set locals)
   (match instr
     [(Instr 'movq (list a b))
      (map (lambda (x) (if (or (equal? x a) (equal? x b)) (list) (list b x))) (set->list live-after-set))]
     [(Instr 'movzbq (list a b))
      (map (lambda (x) (if (or (equal? x (Reg 'rax)) (equal? x b)) (list) (list b x))) (set->list live-after-set))] ;; CHECK IF THIS IS CORRECT !!
+    [(IndirectCallq label arity)
+      (define vecs (set->list (set-intersect (list->set vector-list) (list->set locals))))
+      (define edges '())
+      (display vecs)
+      (for ([v live-after-set])
+         (for ([u caller-saved])
+           (if (equal? v u)
+               (verbose "skip self edge on" v)
+               (set! edges (append edges (list (list u v))))))
+         (for ([u callee-saved])
+           (if (or (equal? v u) (not (member v vecs)))
+               (verbose "skip self edge or non-vector on" v)
+               (set! edges (append edges (list (list u v)))))))
+        edges
+      ]
+    [(Callq label arity)
+      (define vecs (set->list (set-intersect (list->set vector-list) (list->set locals))))
+      (define edges '())
+
+      (for ([v live-after-set])
+         (for ([u caller-saved])
+           (if (equal? v u)
+               (verbose "skip self edge on" v)
+               (set! edges (append edges (list (list u v))))))
+         (for ([u callee-saved])
+           (if (or (equal? v u) (not (member v vecs)))
+               (verbose "skip self edge or non-vector on" v)
+               (set! edges (append edges (list (list u v)))))))
+        edges
+      ]
     [_
      (define write-sett (write-set instr))
      (map (lambda (x) (if (equal? (car x) (cadr x)) (list) x)) (cartesian-product (set->list write-sett) (set->list live-after-set)))]
@@ -1535,31 +1562,35 @@
 
     
 ;; Process list of instructions
-(define (build-graph-exp instrs live-after)
+(define (build-graph-exp instrs live-after locals)
   (match instrs
     [(list a) (list)]
     [_
      (append
-      (generate-edges (car instrs) (car live-after))
-      (build-graph-exp (cdr instrs) (cdr live-after)))]))
+      (generate-edges (car instrs) (car live-after) locals)
+      (build-graph-exp (cdr instrs) (cdr live-after) locals))]))
 
 ;; Build the graph for each block
-(define (build-graph-block block)
+(define (build-graph-block block locals)
   (match block
     [(Block b-info instrs)
      (define live-bef (dict-ref b-info 'live-before))
-     (define edges (build-graph-exp instrs (cdr live-bef)))
+     (define edges (build-graph-exp instrs (cdr live-bef) locals))
      (remove-redundant-edges (remove-empty-edge edges))]
     [_ (error "Error : Unidentified Case while matching block in build-graph-block")]))
 
 ;; Build interference graph
 (define (build-graph p)
   (match p
-    [(X86Program info exp)
-     (define edge-list (foldl append (list) (for/list ([block-pair exp]) (build-graph-block (dict-ref exp (car block-pair)) ))))
-     (define correct-edges  (remove-redundant-edges (remove-empty-edge edge-list)))
-     (printf (graphviz (undirected-graph correct-edges)))
-     (X86Program (dict-set info 'conflict (undirected-graph correct-edges)) exp)]
+    [(ProgramDefs info defs)
+      (define new-defs (for/list ([d defs]) (match d
+        [(Def label paramtypes rt info blocks)
+        (define locals (dict-ref info 'locals))
+        (define edge-list (foldl append (list) (for/list ([block-pair blocks]) (build-graph-block (dict-ref blocks (car block-pair)) locals))))
+        (define correct-edges  (remove-redundant-edges (remove-empty-edge edge-list)))
+        (printf (graphviz (undirected-graph correct-edges)))
+        (Def label paramtypes rt (dict-set info 'conflict (undirected-graph correct-edges)) blocks)])))
+     (ProgramDefs info new-defs)]
     [_ (error "Error: Unidentified Case while matching X86Program in build-graph pass")]))
 
 ;; Creates a dictionary where every node is mapped to -1 (which indicates not visited)
@@ -1861,7 +1892,7 @@
      ("explicate control" ,explicate-control ,interp-Cfun)
      ("instruction selection" ,select-instructions ,interp-pseudo-x86-3)
      ("uncover live" ,uncover-live-pass ,interp-pseudo-x86-3)
-    ;  ("build graph" ,build-graph ,interp-pseudo-x86-3)
+     ("build graph" ,build-graph ,interp-pseudo-x86-3)
      ;  ("assign homes" ,assign-homes ,interp-x86-0)
      ;("allocate-registers" ,allocate-registers ,interp-pseudo-x86-2)
      ;("patch instructions" ,patch-instructions ,interp-x86-2)
