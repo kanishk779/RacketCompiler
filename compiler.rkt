@@ -20,6 +20,7 @@
 (require "interp-Lfun-prime.rkt")
 (require "interp-Lfun.rkt")
 (require "interp-Cvec.rkt")
+(require "interp-Cfun.rkt")
 (require "interp-Lvec-prime.rkt")
 (require "priority_queue.rkt")
 (require "multigraph.rkt")
@@ -110,7 +111,7 @@
     [(ProgramDefsExp info ds body)
      (let ([top-level (for/list ([d ds]) (shrink-exp d))])
        (ProgramDefs info (append top-level (list (Def 'main '() 'Integer '() (shrink-exp body))))))]
-    [(Program info e)   (Program info (shrink-exp e))]  ;; I think we should remove this
+    [(Program info e)   (Program info (shrink-exp e))]  ;; I think we should remove this  :: I think so too
     [_ (error "Error : Unidentified Case in shrink")]))
 
 ;; The dictionary (i.e env) stores the mapping between the original variable names and the new corresponding variable name that we create using gensym function.
@@ -669,6 +670,12 @@
              thn-block
              els-block)
       (list))]
+    [(Apply fn args)
+     (values
+      (IfStmt (Call fn args)
+             thn-block
+             els-block)
+      (list))]
     [(Let x rhs body)
      (define-values (stmt var-list) (explicate-pred body thn-block els-block))
      (explicate-assign rhs x stmt var-list)]
@@ -728,6 +735,12 @@
     [(Let x rhs body)
      (define-values (tail-exp var-list) (explicate-tail body))
      (explicate-assign rhs x tail-exp var-list)]
+    [(Bool b)
+     (values (Return (Bool b)) (list))]
+    [(FunRef l)
+     (values (Return (FunRef l)) (list))]
+    [(Apply fn arg)
+     (values (TailCall fn arg) (list))]
     [(HasType e t) (explicate-tail e)]
  
     [_ (error "explicate-tail unhandled case" exp)]))
@@ -816,6 +829,12 @@
     [(Void)
      (values (Seq (Assign (Var x) (Void)) cont) 
      (cons x var-list))]
+    [(FunRef l)
+     (values (Seq (Assign (Var x) (FunRef l)) cont)
+      (cons x var-list))]
+    [(Apply fn arg)
+     (values (Seq (Assign (Var x) (Call fn arg)) cont)
+      (cons x var-list))]
     [(HasType v t)  (set! vector-list (append vector-list (list v)))
                     (set! vector-list (append vector-list (list x)))
                     (explicate-assign v x cont var-list)]
@@ -843,15 +862,28 @@
 (define (explicate-control p)
   (set! vector-list '())
   (match p
-    [(Program info e)
-     (set! basic-blocks (list))  ;; Need to clear the blocks of previous programs (since it is a global variable)
-     (define-values (tail-exp var-list) (explicate-tail e))
-     (define exp-dict (dict-set basic-blocks 'start tail-exp))
-     (define info-dict (dict-set '() 'locals (set->list (list->set var-list))))
-     (set! vector-list (make-vector-list (set->list (list->set vector-list)) var-list))
-    ;  (printf "\nvector-list ~a\n" vector-list)
-     (define new-dict (dict-set info-dict 'cfg (make-graph exp-dict)))
-     (CProgram new-dict exp-dict)]
+    [(ProgramDefs info defs) 
+      (define locals '())
+      (define new-defs (for/list ([d defs]) 
+        (match d
+        ; [(Def label paramtypes returntype info e)
+        [(Def fun param* rt info body)
+          (set! basic-blocks (list))
+          (define new-fun (string->symbol (string-append (symbol->string fun) "start")))
+          ; (define-values (c3t let-binds) (explicate-tail e fun))
+          (define-values (tail-exp var-list) (explicate-tail body))
+          ; (printf "\n Basic blocks for ~a are ~a\n" new-fun basic-blocks)
+          (define exp-dict (dict-set basic-blocks new-fun tail-exp))
+          ; (set! localvars (append localvars let-binds))
+          (set! locals (append locals (set->list (list->set var-list))))
+          (set! vector-list (make-vector-list (set->list (list->set vector-list)) var-list))
+          ; (define def-alist (filter (λ (v) (not (equal? v '()))) (for/list ([l (get-vertices globalCFG)]) (if (equal? fun (function l))
+          ;                                                                                                     (cons l (instructions l))
+          ;                                                                                                     '()))))
+          (define new-dict (dict-set info 'cfg (make-graph exp-dict new-fun)))
+          (Def fun param* rt new-dict exp-dict)])))
+      (ProgramDefs (cons (cons 'locals locals) info) new-defs)]
+
     [_ (error "Error: Unidentified case in explicate-control")]))
 
 
@@ -873,6 +905,7 @@
     [(Goto label) tail]
     [(IfStmt cnd (Goto label1) (Goto label2)) tail]
     [(Return es) tail]
+    [(TailCall fn arg) tail]
     [_ (error "Error: Unidentified Case in handle-tail")]))
 
 
@@ -884,6 +917,7 @@
     [(Return x) (list (list))]   ;; IMPORTANT -> there might not any edges in the graph, but there can be vertices
     [(Goto next-label) (list (list block-label next-label))]
     [(IfStmt cnd (Goto thn-label) (Goto els-label)) (list (list block-label thn-label) (list block-label els-label))]
+    [(TailCall fn arg) (list (list))]
     [_ (error "Error: Unidentified case in handle-pair")]))
 
 ;; Create the Control-Flow-Graph for basic blocks
@@ -893,12 +927,12 @@
       (append (handle-pair (car blocks)) (create-graph (cdr blocks)))))
 
 ;; Make the graph using multi-graph for basic blocks
-(define (make-graph exp-dict)
+(define (make-graph exp-dict new-fun)
   (define edges (create-graph exp-dict))
   (define correct-edges (remove-redundant-edges (remove-empty-edge edges)))
   (define graph (make-multigraph correct-edges))
   (if (null? correct-edges)
-      (add-vertex! graph 'start)
+      (add-vertex! graph new-fun)
       10)
   graph)
   
@@ -1753,7 +1787,7 @@
      ("uncover-get" ,uncover-get ,interp-Lfun-prime)
      ("expose-allocation" ,expose-allocation ,interp-Lfun-prime)
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lfun-prime)
-     ;("explicate control" ,explicate-control ,interp-Cvec)
+     ("explicate control" ,explicate-control ,interp-Cfun)
      ;("instruction selection" ,select-instructions ,interp-pseudo-x86-2)
      ;("uncover live" ,uncover-live-pass ,interp-pseudo-x86-2)
      ;("build graph" ,build-graph ,interp-pseudo-x86-2)
