@@ -253,6 +253,7 @@
 (define (limit-function-def d)
   (match d
     [(Def fun param rt info body)
+      ; (printf "\nThe param variable has ~a\n" param)
      (define vec (gensym 'arg-vec))   ;; give a new name to the generated vector
      (define types (map caddr param)) ;; extract the types out from param
      (define in-vector (if (> (length param) 6)
@@ -343,6 +344,7 @@
     [_ (error "Error: Unidentified Case in uncover-get")]))
 
 (define (expose-allocation-exp exp)
+  ; (printf "\nExpose allocation processing ~a\n" exp)
   (match exp
     [(Var x) (Var x)]
     [(Int n) (Int n)]
@@ -371,6 +373,7 @@
     [(Prim op es)
      (Prim op (for/list ([e es]) (expose-allocation-exp e)))]
     [(HasType (Prim 'vector e) type)
+      ; (printf "\nEntered HasType\n")
        (define i 0)
        (define bytes (* 8 (length e)))
        (foldl
@@ -393,7 +396,7 @@
                                )
                               )
                             (begin (set! i 0) (HasType (Var 'v) type))
-                            e #;(map expose-allocation-exp e)))
+                          (map expose-allocation-exp e)))
                       )
                  ]
               )
@@ -433,27 +436,31 @@
 ;; Converts the complex expressions to atomic expressions (Refer the grammar on page 27 for atomic expressions)
 ;; by introducing new variables using the Let feature of Racket.
 (define (rco_atom exp)
+  ; (printf "\nRco atom processing ~a\n" exp)
   (match exp
     [(FunRef fun)
-     (define new-name (gensym "fun"))
+     (define new-name (gensym 'fun))
      (Let new-name (FunRef fun) (Var new-name))] ;; Not sure if it is correct
     [(Apply fun args)
-     (define new-name (gensym "fun"))
+      (define new-args (map rco_exp args))
+     (define new-name (gensym 'fun))
      (define i 0)
-     (foldl
+     (define output (foldl
       (lambda (elem acc)
         (let* ([x (string->symbol (string-append "x" (number->string i)))]
-               [q (Let x (list-ref args i) acc)])
+               [q (Let x (list-ref new-args i) acc)])
           (set! i (+ 1 i))
           q
           )
         )
       (begin (set! i 0)
              (match fun
-               [(FunRef var) (Apply fun (make-list-apply (length args) 0))]
-               [_ (Let new-name (rco_exp fun) (Apply (FunRef new-name) (make-list-apply (length args) 0)))]
+              ;  [(FunRef var) (Apply fun (make-list-apply (length args) 0))]
+               [_ (Let new-name (rco_exp fun) (Apply (Var new-name) (make-list-apply (length args) 0)))]
                ))
-      args #;(map rco_exp args))]
+      new-args))
+      ; (printf "Rco atom gives us ~a\n" output)
+      output]
      
     [(Prim op (list e1 e2))
      (cond
@@ -483,6 +490,7 @@
 ;; READ rco_exp --- output ---> As an expression which does not contain any complex operation,
 ;; but it might not necessarily be an atom.
 (define (rco_exp exp)
+  ; (printf "\nRco exp processing ~a\n" exp)
   (match exp
     [(Var x) (Var x)]
     [(Int n) (Int n)]
@@ -635,6 +643,16 @@
       (list))]
     [(Prim op es)
      (values cont (list))]
+    [(FunRef l)
+     (values
+      (Seq
+       (Assign (Var (gensym '_)) (FunRef l)) cont)
+      (list))]
+    [(Apply fn arg)
+     (values
+      (Seq
+       (Assign (Var (gensym '_)) (Call fn arg)) cont)
+      (list))]
     [_ (error "Error: Unidentified Case in explicate-effect" exp)]))
      
 (define vector-list '())     
@@ -671,11 +689,13 @@
              els-block)
       (list))]
     [(Apply fn args)
-     (values
-      (IfStmt (Call fn args)
-             thn-block
-             els-block)
-      (list))]
+      (define tem (gensym 'temp))
+      (values
+        (Seq (Assign (Var tem) (Call fn args)) 
+          (IfStmt (Prim 'eq? (list (Var tem) (Bool #t)))
+              thn-block
+              els-block))
+        (list))]
     [(Let x rhs body)
      (define-values (stmt var-list) (explicate-pred body thn-block els-block))
      (explicate-assign rhs x stmt var-list)]
@@ -712,7 +732,7 @@
      (values
       (Return (Var var)) (list))]
     [(Begin es body)
-     (printf "Begin es ~a  body ~a\n" es body)
+    ;  (printf "Begin es ~a  body ~a\n" es body)
      (define-values (tail-exp var-list) (explicate-tail body))
      (define-values (new-tail var-lst) (explicate-effect es tail-exp)) ;; explicate-effect takes a list of expression and cont stmts, returns a tail-expr
      (values new-tail (append var-list var-lst))]
@@ -980,6 +1000,21 @@
          [res (bitwise-ior type-num type-len)])
     res))
 
+(define (place-args-in-regs args curr)
+  (if (empty? args)
+      empty
+      (cons (Instr 'movq (list (C->X86 (car args))
+                               (Reg (list-ref '(rdi rsi rdx rcx r8 r9) curr))))
+            (place-args-in-regs (cdr args) (+ 1 curr)))))
+
+(define (place-regs-in-args args curr)
+  (if (empty? args)
+      empty
+      (cons (Instr 'movq (list (Reg (list-ref '(rdi rsi rdx rcx r8 r9) curr))
+                               (C->X86 (car args))))
+            (place-regs-in-args (cdr args) (+ 1 curr)))))
+
+
 ;; select for expression (which are assignment statements, as it is the output of explicate control)
 (define (select-exp exp var)
   (match exp
@@ -1041,6 +1076,11 @@
                     (Instr 'movq (list var (Reg 'r11)))
                     (Instr 'movq (list (Imm tag) (Deref 'r11 0)))))] ;; deref r11 at 0 always?
     [(GlobalValue name) (list (Instr 'movq (list (Global name) var)))]
+    [(FunRef fn) (list (Instr 'leaq (list (FunRef fn) var)))]
+    [(Call fn args) 
+      (append (place-args-in-regs args 0)
+        (list (IndirectCallq (C->X86 fn) (length args)) 
+            (Instr 'movq (list (Reg 'rax) var))))]
     [_    ;(printf "\nMatching ~a\n" exp)
         (error "Error: Unidentified Case in select-exp")]))
 
@@ -1080,16 +1120,16 @@
      (list (Callq 'read_int 0))]                ;; Read is now allowed as a statement
     [(Collect n) (list (Instr 'movq (list (Reg 'r15) (Reg 'rdi)))
                        (Instr 'movq (list (Imm n) (Reg 'rsi))) ;; seems right
-                       (Callq 'collect 0))]
+                       (Callq 'collect 0))]                  
     [_ (error "Error: Unidentified Case in select-statement")]))
 
 ;; select for tail (Refer the grammar of C_var for tail)
-(define (select-tail exp)
+(define (select-tail exp fun)
   (match exp
     [(Seq stmt tail)
      (append
       (select-statement stmt)
-      (select-tail tail))]
+      (select-tail tail fun))]
     [(Goto label)
      (list (Jmp label))]
     [(IfStmt (Prim 'vector-ref (list v (Int i) 'Integer)) (Goto label1) (Goto label2))
@@ -1111,8 +1151,13 @@
     [(Return es)
      (append
       (select-exp es (Reg 'rax))
-      (list (Jmp 'conclusion)))]
-    [(HasType tail type) (select-tail tail)]
+      (list (Jmp (string->symbol (string-append (symbol->string fun) "conclusion")))))]
+    [(TailCall fn args) 
+      (append 
+        (place-args-in-regs args 0)
+        (list 
+          (TailJmp (C->X86 fn) (length args))))]
+    [(HasType tail type) (select-tail tail fun)]
     
     [_ (error "Error: Unidentified Case in select-tail")]))
 
@@ -1137,12 +1182,29 @@
 ;; select-instructions : C_if -> pseudo-x86
 (define (select-instructions p)
   (match p
-    [(CProgram info exp-dict)
-        (printf "\nInfo- ~a\n" info)
-       (define new-info (dict-set info 'stack-size (give-st-size (cdr (car info)))))
-       (set! vector-list (set->list (list->set vector-list)))
-        (printf "\nvector-list ~a\n" vector-list)
-       (X86Program new-info (generate-blocks exp-dict))]
+    ; [(CProgram info exp-dict)
+    ;     (printf "\nInfo- ~a\n" info)
+    ;    (define new-info (dict-set info 'stack-size (give-st-size (cdr (car info)))))
+    ;    (set! vector-list (set->list (list->set vector-list)))
+    ;     (printf "\nvector-list ~a\n" vector-list)
+    ;    (X86Program new-info (generate-blocks exp-dict))]
+
+    [(ProgramDefs info defs)
+     (define new-defs (for/list ([d defs])
+                      (match d
+                        [(Def label paramtypes returntype info alist)
+                         (define args (for/list ([param paramtypes])
+                                        (match param
+                                          [`(,v : ,t)
+                                           (Var v)])))
+                         (define new-alist (for/list ([p alist])
+                            (cons (car p) (Block '() (if (equal? (car p) (string->symbol (string-append (symbol->string label) "start")))
+                            (append (place-regs-in-args args 0) (select-tail (cdr p) label))
+                            (select-tail (cdr p) label))))))
+                         (Def label '() returntype
+                              (dict-set info 'num-params (length paramtypes))
+                              new-alist)])))
+     (ProgramDefs info new-defs)]
     [_ (error "Error: Unidentified Case in select-instructions")]))
 
 
@@ -1788,7 +1850,7 @@
      ("expose-allocation" ,expose-allocation ,interp-Lfun-prime)
      ("remove complex opera*" ,remove-complex-opera* ,interp-Lfun-prime)
      ("explicate control" ,explicate-control ,interp-Cfun)
-     ;("instruction selection" ,select-instructions ,interp-pseudo-x86-2)
+     ("instruction selection" ,select-instructions ,interp-pseudo-x86-3)
      ;("uncover live" ,uncover-live-pass ,interp-pseudo-x86-2)
      ;("build graph" ,build-graph ,interp-pseudo-x86-2)
      ;  ("assign homes" ,assign-homes ,interp-x86-0)
