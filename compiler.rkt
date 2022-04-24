@@ -22,6 +22,7 @@
 (require "interp-Cvec.rkt")
 (require "interp-Cfun.rkt")
 (require "interp-Lvec-prime.rkt")
+(require "type-check-Lfun.rkt")
 (require "priority_queue.rkt")
 (require "multigraph.rkt")
 (provide (all-defined-out))
@@ -406,6 +407,7 @@
     [(HasType e t)
      (HasType (expose-allocation-exp e) t)]
     [(Def name param rt info body)
+     (printf "expose-allocation fun : ~a\n" name)
      (Def name param rt info (expose-allocation-exp body))]
     [_ (error "Error: Unidentified Case in expose allocation!")]))
 
@@ -544,13 +546,14 @@
     [(Collect n) (Collect n)]
     [(GlobalValue name) (GlobalValue name)]
     [(Def fun param rt info body)
+     (printf "rco fun : ~a\n" fun)
      (Def fun param rt info (rco_exp body))]
     [(FunRef fun) (FunRef fun)]
     [(Apply fun args) (rco_atom exp)]
     [(Allocate n t) (Allocate n t)]
     [(HasType e t)
      (HasType (rco_exp e) t)]
-    [_  (error "Error: Unidentified case in rco_exp")]))
+    [_  (error "Error: Unidentified case in rco_exp " exp)]))
          
 (define (test_rco p)
   (assert "testing rco"
@@ -1882,15 +1885,15 @@
      ;; Uncomment the following passes as you finish them.
      ;;("partial-evaluator" ,partial-lvar ,interp-Lvar)
      ;;("optimized-par-eval" ,opt-par-lvar ,interp-Lvar)
-     ("shrink" ,shrink ,interp-Lfun)
-     ("uniquify" ,uniquify ,interp-Lfun)
-     ("reveal-function" ,reveal-function ,interp-Lfun-prime)
-     ("limit-function" ,limit-function ,interp-Lfun-prime)
-     ("uncover-get" ,uncover-get ,interp-Lfun-prime)
-     ("expose-allocation" ,expose-allocation ,interp-Lfun-prime)
-     ("remove complex opera*" ,remove-complex-opera* ,interp-Lfun-prime)
-     ("explicate control" ,explicate-control ,interp-Cfun)
-     ("instruction selection" ,select-instructions ,interp-pseudo-x86-3)
+     ("shrink" ,shrink ,interp-Lfun ,type-check-Lfun)
+     ("uniquify" ,uniquify ,interp-Lfun ,type-check-Lfun)
+     ("reveal-function" ,reveal-function ,interp-Lfun-prime ,type-check-Lfun)
+     ("limit-function" ,limit-function ,interp-Lfun-prime ,type-check-Lfun)
+     ("uncover-get" ,uncover-get ,interp-Lfun-prime ,type-check-Lfun)
+     ("expose-allocation" ,expose-allocation ,interp-Lfun-prime ,type-check-Lfun)
+     ("remove complex opera*" ,remove-complex-opera* ,interp-Lfun-prime ,type-check-Lfun)
+     ("explicate control" ,explicate-control ,interp-Cfun )
+     ("instruction selection" ,select-instructions ,interp-pseudo-x86-3 )
      ("uncover live" ,uncover-live-pass ,interp-pseudo-x86-3)
      ("build graph" ,build-graph ,interp-pseudo-x86-3)
      ;  ("assign homes" ,assign-homes ,interp-x86-0)
