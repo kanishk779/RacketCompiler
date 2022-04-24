@@ -173,34 +173,37 @@
     [_ (error "Error: Unidentified Case in uniquify")]))
 
 ;; reveal function calls in each function definition
-(define (reveal-function-exp d )
+(define (reveal-function-exp d fun-names)
   (match d
     [(Int int) d]
     [(Bool b) d]
     [(Void) d]
-    [(Var var) d]
+    [(Var var)
+     (if (member var fun-names)
+         (FunRef var)
+         (Var var))]
     [(If e1 e2 e3)
-     (If (reveal-function-exp e1 ) (reveal-function-exp e2 ) (reveal-function-exp e3 ))]
+     (If (reveal-function-exp e1 fun-names) (reveal-function-exp e2 fun-names) (reveal-function-exp e3 fun-names))]
     [(Let x e body)
-     (Let x (reveal-function-exp e ) (reveal-function-exp body ))]
+     (Let x (reveal-function-exp e fun-names) (reveal-function-exp body fun-names))]
     [(SetBang var rhs)
-     (SetBang var (reveal-function-exp rhs ))]
+     (SetBang var (reveal-function-exp rhs fun-names))]
     [(WhileLoop cnd body)
-     (WhileLoop (reveal-function-exp cnd ) (reveal-function-exp body ))]
+     (WhileLoop (reveal-function-exp cnd fun-names) (reveal-function-exp body fun-names))]
     [(Begin es body)
-     (define new-exp-list (for/list ([e es]) (reveal-function-exp e )))
-     (Begin new-exp-list (reveal-function-exp body ))]
+     (define new-exp-list (for/list ([e es]) (reveal-function-exp e fun-names)))
+     (Begin new-exp-list (reveal-function-exp body fun-names))]
     [(Prim op es)
-     (Prim op (for/list ([e es]) (reveal-function-exp e )))]
+     (Prim op (for/list ([e es]) (reveal-function-exp e fun-names)))]
     [(HasType es type)
-     (HasType (reveal-function-exp es ) type)]
+     (HasType (reveal-function-exp es fun-names) type)]
     [(Apply fun args)
-     (define arg-vals (for/list ([e args]) (reveal-function-exp e )))
+     (define arg-vals (for/list ([e args]) (reveal-function-exp e fun-names)))
      (match fun
        [(Var var) (Apply (FunRef var) arg-vals)]
-       [_ (Apply (reveal-function-exp fun) arg-vals)])]
+       [_ (Apply (reveal-function-exp fun fun-names) arg-vals)])]
     [(Def fun param* rt info body)
-     (Def fun param* rt info (reveal-function-exp body ))]
+     (Def fun param* rt info (reveal-function-exp body fun-names))]
     [_ (error "Error: Unidentified Case in reveal-function-exp")]
     ))
 
@@ -208,7 +211,9 @@
 (define (reveal-function p)
   (match p
     [(ProgramDefs info ds)
-     (define new-ds (for/list ([d ds]) (reveal-function-exp d )))
+     (define fun-names (map (lambda (d) (Def-name d)) ds))
+     (printf "fun-names : ~a\n" fun-names)
+     (define new-ds (for/list ([d ds]) (reveal-function-exp d fun-names)))
      (ProgramDefs info new-ds)]
     [_ (error "Error: Unidentified Case in reveal-function")]))
 
@@ -309,6 +314,8 @@
      (if (set-member? vars x)
          (GetBang x)
          (Var x))]
+    [(FunRef f)
+         (FunRef f)]
     [(Int n) (Int n)]
     [(Bool b) (Bool b)]
     [(Void) (Void)]
@@ -328,7 +335,7 @@
     [(HasType ex t) (HasType ((uncover-get! vars) ex) t)]
     [(Def name param rt info body)
      (Def name param rt info ((uncover-get! vars) body))]
-    [(FunRef f) (FunRef f)]
+    
     [(Apply fun arg)
      (Apply ((uncover-get! vars) fun) (map (uncover-get! vars) arg))]
     [_ (error "Error: Unidentified Case in uncover-get!")]))
