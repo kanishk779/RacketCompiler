@@ -1730,10 +1730,11 @@
     [(Block info instrs) (Block info (allocate-register-helper instrs colouring colourreg offset))]
     [_ (error "Error: unidentified case in new-allocation" block)]))
 
-;; Replaces variable names with registers or stack locations
-(define (allocate-registers p)
-    (match p
-        [(X86Program info exp)
+
+(define (handle-defs function)
+  (match function
+    [(Def fun param* rt info body) 
+
             (define graph (dict-ref info 'conflict))
             (define nodes (sequence->list (in-vertices graph)))
             
@@ -1761,10 +1762,50 @@
             (define new-info (dict-set n-info 'spilled-vars spilled-vars))
             (set! spill-root (set->list (list->set spill-root)))
             (define n-new-info (dict-set new-info 'num-root-spills (length spill-root)))
-            (define new-exp (for/list ([block-pair exp]) (cons (car block-pair) (new-allocation (dict-ref exp (car block-pair)) colouring colourreg (* 8 (length callee-reg))))))
-            ;(define new-block (Block block-info (allocate-register-helper instr mapping (* 8 (length callee-reg)))))
-            ;(define new-exp (dict-set '() 'start new-block))
-            (X86Program n-new-info new-exp)]
+            (define new-exp (for/list ([block-pair body]) (cons (car block-pair) (new-allocation (dict-ref body (car block-pair)) colouring colourreg (* 8 (length callee-reg))))))
+            (Def fun param* rt (dict-set info n-new-info) new-exp)]
+            [_ (error "Unidentified")]))
+
+
+;; Replaces variable names with registers or stack locations
+(define (allocate-registers p)
+    (match p
+    ;     [(X86Program info exp)
+    ;         (define graph (dict-ref info 'conflict))
+    ;         (define nodes (sequence->list (in-vertices graph)))
+            
+    ;         ; create the priority queue by passing in the comparator
+    ;         (define q (make-pqueue tup->))
+    ;         (for ([i nodes])
+    ;           (pqueue-push! q (tup i (sequence-length (in-neighbors graph i)))))
+    ;         ; Mapping between nodes and it's saturation list
+    ;         (define saturation (map (lambda (x) (cons x (list))) nodes))
+    ;         ; Initially every Variable is assigned -1 as the color and -2 for the Registers
+    ;         (define colours (make-colors nodes '()))
+            
+    ;         (define colouring (dsatur q colours saturation graph))
+    ;         (define color-list (remove-duplicates (dict-values colouring)))
+        
+    ;         (define spilled-vars (let ([x (- (- (length color-list) 1) (length register-list))]) (if (> 0 x) 0 x))) 
+  
+    ;         (define new-reg-list (add-stack-locations register-list spilled-vars))
+    ;         (define colourreg (generate-colourreg '() 0 new-reg-list))
+                    
+    ;         (define mapping (allocate-create-mapping nodes colouring colourreg))
+            
+    ;         (define callee-reg (remove-duplicates (used-callee (dict-values mapping))))
+    ;         (define n-info (dict-set info 'used_callee callee-reg))
+    ;         (define new-info (dict-set n-info 'spilled-vars spilled-vars))
+    ;         (set! spill-root (set->list (list->set spill-root)))
+    ;         (define n-new-info (dict-set new-info 'num-root-spills (length spill-root)))
+    ;         (define new-exp (for/list ([block-pair exp]) (cons (car block-pair) (new-allocation (dict-ref exp (car block-pair)) colouring colourreg (* 8 (length callee-reg))))))
+    ;         ;(define new-block (Block block-info (allocate-register-helper instr mapping (* 8 (length callee-reg)))))
+    ;         ;(define new-exp (dict-set '() 'start new-block))
+    ;         (X86Program n-new-info new-exp)]
+
+        [(ProgramDefs info defs)
+          (define new-defs (for/list ([d defs]) (handle-defs d)))
+          (ProgramDefs info new-defs)]
         [_ (error "Error: Unidentified Case while matching program in allocate registers pass")]))
 
 
@@ -1829,12 +1870,23 @@
     [(Block info instrs) (Block info (patch-helper instrs))]
     [_ (error "Error: Unidentified Case in patch-block-helper")]))
 
+(define (patch-defs function)
+  (match function 
+    [(Def fun param* rt info body) 
+      (define new-body (map (lambda (body) (cons (car body) (patch-block-helper (cdr body))))))
+      (Def fun param* rt info new-body)]))
+
+      
 ;; patch-instructions : psuedo-x86 -> x86
 (define (patch-instructions p)
   (match p
-    [(X86Program info exp)
-     (define new-exp (for/list ([block-pair exp]) (cons (car block-pair) (patch-block-helper (dict-ref exp (car block-pair))))))
-     (X86Program info new-exp)]
+    ; [(X86Program info exp)
+    ;  (define new-exp (for/list ([block-pair exp]) (cons (car block-pair) (patch-block-helper (dict-ref exp (car block-pair))))))
+    ;  (X86Program info new-exp)]
+
+     [(ProgramDefs info defs) 
+      (define new-defs (for/list ([d defs]) (patch-defs d)))
+      (ProgramDefs info new-defs )]
     [_ (error "Error: Unidentified Case")]))
 
 
@@ -1872,16 +1924,29 @@
 ;; prelude-and-conclusion : x86 -> x86
 (define (prelude-and-conclusion p)
   (match p
-    [(X86Program info exp) 
+    ; [(X86Program info exp) 
+    ; (define roots (dict-ref info 'num-root-spills))
+    ; (define spilled (dict-ref info 'spilled-vars))
+    ; (define used-callee (dict-ref info 'used_callee))
+    ; (define st-size (- (align-16 (+ spilled (length used-callee))) (* 8 (length used-callee)))) ;; Refer the formula on Page 50
+    ; (define main-block (Block '() (main-gen st-size used-callee roots)))
+    ; (define conclusion-block (Block '() (conclusion-gen st-size used-callee roots)))
+    ; (define new-exp (dict-set exp 'main main-block))
+    ; (define final-exp (dict-set new-exp 'conclusion conclusion-block))
+    ; (X86Program info final-exp)]
+    
+    [(ProgramDefs info defs) 
+
     (define roots (dict-ref info 'num-root-spills))
     (define spilled (dict-ref info 'spilled-vars))
     (define used-callee (dict-ref info 'used_callee))
     (define st-size (- (align-16 (+ spilled (length used-callee))) (* 8 (length used-callee)))) ;; Refer the formula on Page 50
     (define main-block (Block '() (main-gen st-size used-callee roots)))
     (define conclusion-block (Block '() (conclusion-gen st-size used-callee roots)))
-    (define new-exp (dict-set exp 'main main-block))
-    (define final-exp (dict-set new-exp 'conclusion conclusion-block))
-    (X86Program info final-exp)]
+    (define new-body (dict-set defs 'main main-block))
+    (define final-body (dict-set defs 'conclusion conclusion-block))
+    (ProgramDefs info final-body)]
+
     [_ (error "Error: Unidentified Case")]))
 
 ;; Define the compiler passes to be used by interp-tests and the grader
@@ -1904,8 +1969,8 @@
      ("uncover live" ,uncover-live-pass ,interp-pseudo-x86-3)
      ("build graph" ,build-graph ,interp-pseudo-x86-3)
      ;  ("assign homes" ,assign-homes ,interp-x86-0)
-     ;("allocate-registers" ,allocate-registers ,interp-pseudo-x86-2)
-     ;("patch instructions" ,patch-instructions ,interp-x86-2)
-     ;("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-2)
+     ("allocate-registers" ,allocate-registers ,interp-pseudo-x86-2)
+     ("patch instructions" ,patch-instructions ,interp-x86-2)
+     ("prelude-and-conclusion" ,prelude-and-conclusion ,interp-x86-2)
      ))
 
